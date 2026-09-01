@@ -544,7 +544,7 @@ function exportPriorityToExcel() {
 }
 
 // ================================
-// HALAMAN TIMELINE AGENDA
+// HALAMAN TIMELINE AGENDA (WRAPPING VERTICAL)
 // ================================
 function renderTimeline() {
     document.getElementById("pageTitle").innerText = "Timeline Agenda";
@@ -565,24 +565,30 @@ function renderTimeline() {
         return;
     }
 
-    // CSS Khusus untuk Timeline (Disuntikkan langsung agar mudah)
+    // CSS Timeline (Otomatis turun ke bawah saat penuh)
     const timelineCSS = `
         <style>
             .timeline-container {
                 display: flex;
-                overflow-x: auto;
+                flex-wrap: wrap; /* Izinkan berlanjut ke baris bawah */
+                row-gap: 40px;   /* Jarak antar baris */
+                column-gap: 0;
                 padding: 40px 20px;
                 background: #fff;
                 border-radius: 12px;
                 box-shadow: 0 4px 15px rgba(0,0,0,0.03);
                 margin-top: 20px;
+                width: 100%;
+                box-sizing: border-box;
             }
             .timeline-item {
-                min-width: 180px;
-                flex: 1;
+                flex: 1 1 220px; /* Lebar fleksibel min 220px per item */
+                max-width: 300px;
                 display: flex;
                 flex-direction: column;
                 align-items: center;
+                position: relative;
+                box-sizing: border-box;
             }
             .timeline-date {
                 font-weight: 600;
@@ -615,7 +621,7 @@ function renderTimeline() {
                 background-color: #217346;
             }
             .timeline-item:last-child .timeline-line {
-                display: none; /* Hilangkan garis di item terakhir */
+                display: none; /* Hilangkan garis penyambung di item terakhir */
             }
             .timeline-node {
                 position: relative;
@@ -658,18 +664,14 @@ function renderTimeline() {
                 font-size: 12px;
                 color: #64748b;
             }
-            /* Scrollbar styling */
-            .timeline-container::-webkit-scrollbar { height: 8px; }
-            .timeline-container::-webkit-scrollbar-thumb { background-color: #cbd5e1; border-radius: 4px; }
         </style>
     `;
 
     let timelineHTML = `<div class="timeline-container">`;
 
-    sortedAgendas.forEach((agenda, index) => {
+    sortedAgendas.forEach((agenda) => {
         const isCompleted = agenda.timelineCompleted ? true : false;
         
-        // Format Tanggal (contoh: 20 Jan)
         let dateStr = "Tanpa Tanggal";
         if (agenda.date) {
             dateStr = new Date(agenda.date).toLocaleDateString('id-ID', { month: 'short', day: 'numeric' });
@@ -680,7 +682,6 @@ function renderTimeline() {
                 <div class="timeline-date">${dateStr}</div>
                 <div class="timeline-node-wrapper">
                     <div class="timeline-line"></div>
-                    <!-- Node Checklist yang bisa diklik -->
                     <div class="timeline-node" onclick="toggleTimelineStatus('${agenda.id}')">
                         <span class="timeline-icon">✓</span>
                     </div>
