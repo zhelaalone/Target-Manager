@@ -544,7 +544,7 @@ function exportPriorityToExcel() {
 }
 
 // ================================
-// HALAMAN TIMELINE AGENDA (WRAPPING VERTICAL)
+// HALAMAN TIMELINE AGENDA
 // ================================
 function renderTimeline() {
     document.getElementById("pageTitle").innerText = "Timeline Agenda";
@@ -553,7 +553,6 @@ function renderTimeline() {
     const content = document.getElementById("content");
     content.style.display = "block";
 
-    // Urutkan agenda berdasarkan tanggal (terdekat ke terjauh)
     const sortedAgendas = [...agendas].sort((a, b) => {
         const dateA = a.date ? new Date(a.date).getTime() : Infinity;
         const dateB = b.date ? new Date(b.date).getTime() : Infinity;
@@ -565,13 +564,12 @@ function renderTimeline() {
         return;
     }
 
-    // CSS Timeline (Otomatis turun ke bawah saat penuh)
     const timelineCSS = `
         <style>
             .timeline-container {
                 display: flex;
-                flex-wrap: wrap; /* Izinkan berlanjut ke baris bawah */
-                row-gap: 40px;   /* Jarak antar baris */
+                flex-wrap: wrap; 
+                row-gap: 40px;   
                 column-gap: 0;
                 padding: 40px 20px;
                 background: #fff;
@@ -580,9 +578,10 @@ function renderTimeline() {
                 margin-top: 20px;
                 width: 100%;
                 box-sizing: border-box;
+                overflow: hidden; /* Mencegah overflow visual */
             }
             .timeline-item {
-                flex: 1 1 220px; /* Lebar fleksibel min 220px per item */
+                flex: 1 1 220px; 
                 max-width: 300px;
                 display: flex;
                 flex-direction: column;
@@ -619,9 +618,6 @@ function renderTimeline() {
             }
             .timeline-item.completed .timeline-line {
                 background-color: #217346;
-            }
-            .timeline-item:last-child .timeline-line {
-                display: none; /* Hilangkan garis penyambung di item terakhir */
             }
             .timeline-node {
                 position: relative;
@@ -671,7 +667,6 @@ function renderTimeline() {
 
     sortedAgendas.forEach((agenda) => {
         const isCompleted = agenda.timelineCompleted ? true : false;
-        
         let dateStr = "Tanpa Tanggal";
         if (agenda.date) {
             dateStr = new Date(agenda.date).toLocaleDateString('id-ID', { month: 'short', day: 'numeric' });
@@ -696,6 +691,9 @@ function renderTimeline() {
 
     timelineHTML += `</div>`;
     content.innerHTML = timelineCSS + timelineHTML;
+
+    // --- Panggil fungsi perbaikan garis setelah HTML dirender ---
+    setTimeout(fixTimelineLines, 10);
 }
 
 // ================================
@@ -710,3 +708,34 @@ function toggleTimelineStatus(agendaId) {
         renderTimeline(); // Render ulang agar animasi UI berjalan
     }
 }
+
+// ================================
+// PERBAIKAN GARIS TIMELINE (JS POTONG GARIS)
+// ================================
+function fixTimelineLines() {
+    const items = document.querySelectorAll('.timeline-item');
+    
+    items.forEach((item, index) => {
+        const line = item.querySelector('.timeline-line');
+        if (line) line.style.display = 'block'; // Reset tampilkan semua garis dulu
+        
+        // Selalu sembunyikan garis pada item paling akhir di seluruh timeline
+        if (index === items.length - 1) {
+            if (line) line.style.display = 'none';
+            return;
+        }
+        
+        // Cek posisi vertikal: Jika item berikutnya ada di bawah item saat ini (turun baris)
+        // Maka sembunyikan garis pada item saat ini
+        if (item.offsetTop < items[index + 1].offsetTop) {
+            if (line) line.style.display = 'none';
+        }
+    });
+}
+
+// Pastikan perhitungan ulang terjadi jika pengguna me-resize ukuran layar/browser
+window.addEventListener('resize', () => {
+    if (document.getElementById("pageTitle").innerText === "Timeline Agenda") {
+        fixTimelineLines();
+    }
+});
