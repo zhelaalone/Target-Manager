@@ -223,7 +223,7 @@ function renderSpecialPage(type) {
     const content = document.getElementById("content");
     content.style.display = "block";
     
-    // --- TOMBOL EXPORT EXCEL KHUSUS HALAMAN PRIORITAS ---
+    // Tombol Export Excel untuk Halaman Prioritas
     let exportBtn = "";
     if (type === 'priority') {
         exportBtn = `
@@ -242,7 +242,6 @@ function renderSpecialPage(type) {
 
     agendas.forEach(agenda => {
         agenda.targets.forEach(target => {
-            // Pada halaman prioritas, kita tampilkan yang belum selesai saja
             if (type === 'priority' && target.priority && !target.completed) {
                 filteredTargets.push({...target, agendaName: agenda.name, agendaId: agenda.id});
             } else if (type === 'completed' && target.completed) {
@@ -250,6 +249,10 @@ function renderSpecialPage(type) {
             }
         });
     });
+
+    // --- LOGIKA PENGURUTAN TANGGAL DITAMBAHKAN DI SINI ---
+    // Mengurutkan dari tanggal deadline terdekat ke terjauh
+    filteredTargets.sort((a, b) => new Date(a.deadline) - new Date(b.deadline));
 
     if (filteredTargets.length === 0) {
         container.innerHTML = `<div class="empty-state"><h2>Belum ada target</h2><p>Tidak ada data untuk ditampilkan di sini.</p></div>`;
@@ -459,48 +462,58 @@ renderDashboard();
 // EXPORT EXCEL TARGET PRIORITAS
 // ================================
 function exportPriorityToExcel() {
-    // 1. Kumpulkan seluruh data prioritas (baik yang sudah selesai maupun belum untuk direkap)
-    let priorityData = [];
-    let no = 1;
+    // 1. Kumpulkan data mentah terlebih dahulu
+    let priorityDataRaw = [];
 
     agendas.forEach(agenda => {
         agenda.targets.forEach(target => {
             if (target.priority) {
-                priorityData.push({
-                    "No": no++,
-                    "Nama Agenda": agenda.name,
-                    "Hari H Agenda": formatDate(agenda.date),
-                    "Nama Target": target.name,
-                    "Deadline Target": formatDate(target.deadline),
-                    "Status": target.completed ? "Selesai" : "Belum Selesai"
+                priorityDataRaw.push({
+                    agendaName: agenda.name,
+                    agendaDate: agenda.date,
+                    targetName: target.name,
+                    targetDeadline: target.deadline,
+                    completed: target.completed
                 });
             }
         });
     });
 
-    if (priorityData.length === 0) {
+    if (priorityDataRaw.length === 0) {
         alert("Tidak ada target prioritas untuk diekspor.");
         return;
     }
 
-    // 2. Ubah data JSON/Array menjadi bentuk Worksheet Excel (SheetJS)
+    // 2. --- LOGIKA PENGURUTAN TANGGAL UNTUK EXCEL ---
+    // Mengurutkan berdasarkan Target Deadline (dari yang terdekat)
+    priorityDataRaw.sort((a, b) => new Date(a.targetDeadline) - new Date(b.targetDeadline));
+
+    // 3. Format ulang data mentah yang sudah terurut menjadi format rapi untuk Excel
+    let priorityData = priorityDataRaw.map((data, index) => ({
+        "No": index + 1,
+        "Nama Agenda": data.agendaName,
+        "Hari H Agenda": formatDate(data.agendaDate),
+        "Nama Target": data.targetName,
+        "Deadline Target": formatDate(data.targetDeadline),
+        "Status": data.completed ? "Selesai" : "Belum Selesai"
+    }));
+
+    // 4. Ubah data ke format Worksheet (SheetJS)
     const ws = XLSX.utils.json_to_sheet(priorityData);
 
-    // 3. Atur lebar kolom agar rapi saat dibuka di Excel
+    // 5. Atur lebar kolom agar rapi saat dibuka di Excel
     const wscols = [
-        {wch: 5},  // Lebar kolom No
-        {wch: 25}, // Lebar kolom Nama Agenda
-        {wch: 20}, // Lebar kolom Hari H
-        {wch: 35}, // Lebar kolom Nama Target
-        {wch: 20}, // Lebar kolom Deadline Target
-        {wch: 15}  // Lebar kolom Status
+        {wch: 5},  // No
+        {wch: 25}, // Nama Agenda
+        {wch: 20}, // Hari H
+        {wch: 35}, // Nama Target
+        {wch: 20}, // Deadline Target
+        {wch: 15}  // Status
     ];
     ws['!cols'] = wscols;
 
-    // 4. Buat file Excel (Workbook) baru dan masukkan Worksheet ke dalamnya
+    // 6. Buat file Excel dan Trigger Download
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Rekap Prioritas");
-
-    // 5. Download secara otomatis (Trigger unduhan)
     XLSX.writeFile(wb, "Rekap_Target_Prioritas.xlsx");
 }
