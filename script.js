@@ -223,7 +223,7 @@ function renderSpecialPage(type) {
     const content = document.getElementById("content");
     content.style.display = "block";
     
-    // Tombol Export Excel untuk Halaman Prioritas
+    // Tombol Export Excel khusus tab Prioritas
     let exportBtn = "";
     if (type === 'priority') {
         exportBtn = `
@@ -240,6 +240,7 @@ function renderSpecialPage(type) {
     
     let filteredTargets = [];
 
+    // Mengumpulkan data target
     agendas.forEach(agenda => {
         agenda.targets.forEach(target => {
             if (type === 'priority' && target.priority && !target.completed) {
@@ -250,10 +251,15 @@ function renderSpecialPage(type) {
         });
     });
 
-    // --- LOGIKA PENGURUTAN TANGGAL DITAMBAHKAN DI SINI ---
-    // Mengurutkan dari tanggal deadline terdekat ke terjauh
-    filteredTargets.sort((a, b) => new Date(a.deadline) - new Date(b.deadline));
+    // --- LOGIKA PENGURUTAN (TANGGAL TERDEKAT KE TERJAUH) ---
+    filteredTargets.sort((a, b) => {
+        // Jika deadline kosong, beri nilai Infinity agar jatuh ke urutan paling bawah
+        const dateA = a.deadline ? new Date(a.deadline).getTime() : Infinity;
+        const dateB = b.deadline ? new Date(b.deadline).getTime() : Infinity;
+        return dateA - dateB;
+    });
 
+    // Menampilkan UI setelah diurutkan
     if (filteredTargets.length === 0) {
         container.innerHTML = `<div class="empty-state"><h2>Belum ada target</h2><p>Tidak ada data untuk ditampilkan di sini.</p></div>`;
         return;
