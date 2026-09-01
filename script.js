@@ -216,9 +216,26 @@ function renderTargets(agenda) {
 // ================================
 // HALAMAN PRIORITAS & SELESAI
 // ================================
+// ================================
+// HALAMAN REKAP TARGET (PRIORITAS, SELESAI, & SEMUA TARGET)
+// ================================
 function renderSpecialPage(type) {
-    document.getElementById("pageTitle").innerText = type === 'priority' ? "Target Prioritas" : "Target Selesai";
-    document.getElementById("pageSubtitle").innerText = type === 'priority' ? "Fokus pada target paling penting." : "Pekerjaan yang telah Anda selesaikan.";
+    let title = "";
+    let subtitle = "";
+    
+    if (type === 'priority') {
+        title = "Target Prioritas";
+        subtitle = "Fokus pada target paling penting.";
+    } else if (type === 'completed') {
+        title = "Target Selesai";
+        subtitle = "Pekerjaan yang telah Anda selesaikan.";
+    } else if (type === 'all-targets') {
+        title = "Semua Target";
+        subtitle = "Rekap seluruh target dari semua agenda, diurutkan dari deadline terdekat.";
+    }
+    
+    document.getElementById("pageTitle").innerText = title;
+    document.getElementById("pageSubtitle").innerText = subtitle;
     
     const content = document.getElementById("content");
     content.style.display = "block";
@@ -240,26 +257,26 @@ function renderSpecialPage(type) {
     
     let filteredTargets = [];
 
-    // Mengumpulkan data target
+    // Mengumpulkan target berdasarkan tab yang dibuka
     agendas.forEach(agenda => {
         agenda.targets.forEach(target => {
             if (type === 'priority' && target.priority && !target.completed) {
                 filteredTargets.push({...target, agendaName: agenda.name, agendaId: agenda.id});
             } else if (type === 'completed' && target.completed) {
                 filteredTargets.push({...target, agendaName: agenda.name, agendaId: agenda.id});
+            } else if (type === 'all-targets') {
+                filteredTargets.push({...target, agendaName: agenda.name, agendaId: agenda.id});
             }
         });
     });
 
-    // --- LOGIKA PENGURUTAN (TANGGAL TERDEKAT KE TERJAUH) ---
+    // PENGURUTAN: Tanggal terdekat ke terjauh
     filteredTargets.sort((a, b) => {
-        // Jika deadline kosong, beri nilai Infinity agar jatuh ke urutan paling bawah
         const dateA = a.deadline ? new Date(a.deadline).getTime() : Infinity;
         const dateB = b.deadline ? new Date(b.deadline).getTime() : Infinity;
         return dateA - dateB;
     });
 
-    // Menampilkan UI setelah diurutkan
     if (filteredTargets.length === 0) {
         container.innerHTML = `<div class="empty-state"><h2>Belum ada target</h2><p>Tidak ada data untuk ditampilkan di sini.</p></div>`;
         return;
@@ -402,7 +419,7 @@ function closeTargetModal() {
 
 
 // ================================
-// TOGGLE & DELETE LOGIC
+// TOGGLE TARGET (DENGAN RE-RENDER TAB TERKAIT)
 // ================================
 function toggleTarget(agendaId, targetId, currentView = 'agenda') {
     const agenda = agendas.find(a => a.id === agendaId);
@@ -410,7 +427,7 @@ function toggleTarget(agendaId, targetId, currentView = 'agenda') {
     target.completed = !target.completed;
     saveData();
     
-    if(currentView === 'priority' || currentView === 'completed') {
+    if(['priority', 'completed', 'all-targets'].includes(currentView)) {
         renderSpecialPage(currentView);
     } else {
         openAgenda(agendaId);
@@ -443,7 +460,7 @@ function deleteAgenda(event, agendaId) {
 
 
 // ================================
-// NAVIGATION
+// NAVIGATION HANDLER
 // ================================
 document.querySelectorAll(".nav-item").forEach(button => {
     button.addEventListener("click", function() {
@@ -453,6 +470,7 @@ document.querySelectorAll(".nav-item").forEach(button => {
         const page = this.dataset.page;
         if (page === "dashboard") renderDashboard();
         else if (page === "agenda") renderAgendas();
+        else if (page === "all-targets") renderSpecialPage('all-targets');
         else if (page === "priority") renderSpecialPage('priority');
         else if (page === "completed") renderSpecialPage('completed');
     });
