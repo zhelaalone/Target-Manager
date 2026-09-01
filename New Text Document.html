@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Target Manager</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+    <!-- SIDEBAR -->
+    <aside class="sidebar">
+        <div class="logo">Target Manager</div>
+        <nav>
+            <!-- Tambahan Menu Dashboard -->
+            <button class="nav-item active" data-page="dashboard">
+                📊 Dashboard
+            </button>
+            <button class="nav-item" data-page="agenda">
+                📁 Semua Agenda
+            </button>
+            <button class="nav-item" data-page="priority">
+                ⭐ Target Prioritas
+            </button>
+            <button class="nav-item" data-page="completed">
+                ✓ Selesai
+            </button>
+        </nav>
+    </aside>
+
+    <!-- MAIN -->
+    <main class="main">
+        <!-- HEADER -->
+        <header class="header">
+            <div>
+                <h1 id="pageTitle">Dashboard</h1>
+                <p id="pageSubtitle">Ringkasan agenda dan target terdekat Anda.</p>
+            </div>
+            <button class="btn-primary" onclick="openAgendaModal()">
+                + Tambah Agenda
+            </button>
+        </header>
+
+        <!-- CONTENT -->
+        <section id="content">
+            <!-- KONTEN MUNCUL DI SINI SECARA DINAMIS -->
+        </section>
+    </main>
+
+
+    <!-- MODAL TAMBAH/EDIT AGENDA -->
+    <div class="modal hidden" id="agendaModal">
+        <div class="modal-content">
+            <button class="close" onclick="closeAgendaModal()">×</button>
+            <h2 id="agendaModalTitle">Tambah Agenda</h2>
+            
+            <form id="agendaForm">
+                <!-- Hidden input untuk Edit -->
+                <input type="hidden" id="editAgendaId">
+
+                <label>Nama Agenda</label>
+                <input type="text" id="agendaName" placeholder="Contoh: Skripsi" required>
+
+                <!-- Tambahan: Hari H Agenda -->
+                <label>Hari H (Tanggal Agenda)</label>
+                <input type="date" id="agendaDate" required>
+
+                <label>Deskripsi</label>
+                <textarea id="agendaDescription" placeholder="Deskripsi agenda..."></textarea>
+
+                <button class="btn-primary" type="submit">Simpan Agenda</button>
+            </form>
+        </div>
+    </div>
+
+
+    <!-- MODAL TAMBAH/EDIT TARGET -->
+    <div class="modal hidden" id="targetModal">
+        <div class="modal-content">
+            <button class="close" onclick="closeTargetModal()">×</button>
+            <h2 id="targetModalTitle">Tambah Target</h2>
+            
+            <form id="targetForm">
+                <input type="hidden" id="targetAgendaId">
+                <!-- Hidden input untuk Edit -->
+                <input type="hidden" id="editTargetId">
+
+                <label>Target</label>
+                <input type="text" id="targetName" placeholder="Contoh: Menyelesaikan Bab 1" required>
+
+                <label>Deadline Target</label>
+                <input type="date" id="targetDeadline" required>
+
+                <label class="checkbox">
+                    <input type="checkbox" id="targetPriority">
+                    Jadikan Target Prioritas
+                </label>
+
+                <button class="btn-primary" type="submit">Simpan Target</button>
+            </form>
+        </div>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>
