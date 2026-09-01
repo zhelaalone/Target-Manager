@@ -222,13 +222,27 @@ function renderSpecialPage(type) {
     
     const content = document.getElementById("content");
     content.style.display = "block";
-    content.innerHTML = `<div class="target-list-page" style="display:flex; flex-direction:column; gap:1rem;"></div>`;
+    
+    // --- TOMBOL EXPORT EXCEL KHUSUS HALAMAN PRIORITAS ---
+    let exportBtn = "";
+    if (type === 'priority') {
+        exportBtn = `
+            <div style="display: flex; justify-content: flex-end; margin-bottom: 1.5rem;">
+                <button class="btn-primary" onclick="exportPriorityToExcel()" style="background-color: #217346; box-shadow: 0 6px 20px rgba(33, 115, 70, 0.3);">
+                    📊 Export Excel
+                </button>
+            </div>
+        `;
+    }
+
+    content.innerHTML = exportBtn + `<div class="target-list-page" style="display:flex; flex-direction:column; gap:1rem;"></div>`;
     const container = content.querySelector(".target-list-page");
     
     let filteredTargets = [];
 
     agendas.forEach(agenda => {
         agenda.targets.forEach(target => {
+            // Pada halaman prioritas, kita tampilkan yang belum selesai saja
             if (type === 'priority' && target.priority && !target.completed) {
                 filteredTargets.push({...target, agendaName: agenda.name, agendaId: agenda.id});
             } else if (type === 'completed' && target.completed) {
@@ -440,3 +454,53 @@ document.querySelectorAll(".nav-item").forEach(button => {
 // INITIAL LOAD
 // ================================
 renderDashboard();
+
+// ================================
+// EXPORT EXCEL TARGET PRIORITAS
+// ================================
+function exportPriorityToExcel() {
+    // 1. Kumpulkan seluruh data prioritas (baik yang sudah selesai maupun belum untuk direkap)
+    let priorityData = [];
+    let no = 1;
+
+    agendas.forEach(agenda => {
+        agenda.targets.forEach(target => {
+            if (target.priority) {
+                priorityData.push({
+                    "No": no++,
+                    "Nama Agenda": agenda.name,
+                    "Hari H Agenda": formatDate(agenda.date),
+                    "Nama Target": target.name,
+                    "Deadline Target": formatDate(target.deadline),
+                    "Status": target.completed ? "Selesai" : "Belum Selesai"
+                });
+            }
+        });
+    });
+
+    if (priorityData.length === 0) {
+        alert("Tidak ada target prioritas untuk diekspor.");
+        return;
+    }
+
+    // 2. Ubah data JSON/Array menjadi bentuk Worksheet Excel (SheetJS)
+    const ws = XLSX.utils.json_to_sheet(priorityData);
+
+    // 3. Atur lebar kolom agar rapi saat dibuka di Excel
+    const wscols = [
+        {wch: 5},  // Lebar kolom No
+        {wch: 25}, // Lebar kolom Nama Agenda
+        {wch: 20}, // Lebar kolom Hari H
+        {wch: 35}, // Lebar kolom Nama Target
+        {wch: 20}, // Lebar kolom Deadline Target
+        {wch: 15}  // Lebar kolom Status
+    ];
+    ws['!cols'] = wscols;
+
+    // 4. Buat file Excel (Workbook) baru dan masukkan Worksheet ke dalamnya
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Rekap Prioritas");
+
+    // 5. Download secara otomatis (Trigger unduhan)
+    XLSX.writeFile(wb, "Rekap_Target_Prioritas.xlsx");
+}
