@@ -470,6 +470,7 @@ document.querySelectorAll(".nav-item").forEach(button => {
         const page = this.dataset.page;
         if (page === "dashboard") renderDashboard();
         else if (page === "agenda") renderAgendas();
+        else if (page === "timeline") renderTimeline(); // <-- TAMBAHKAN BARIS INI
         else if (page === "all-targets") renderSpecialPage('all-targets');
         else if (page === "priority") renderSpecialPage('priority');
         else if (page === "completed") renderSpecialPage('completed');
@@ -540,4 +541,171 @@ function exportPriorityToExcel() {
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Rekap Prioritas");
     XLSX.writeFile(wb, "Rekap_Target_Prioritas.xlsx");
+}
+
+// ================================
+// HALAMAN TIMELINE AGENDA
+// ================================
+function renderTimeline() {
+    document.getElementById("pageTitle").innerText = "Timeline Agenda";
+    document.getElementById("pageSubtitle").innerText = "Visualisasi alur waktu agenda Anda. Klik lingkaran untuk menceklis agenda.";
+    
+    const content = document.getElementById("content");
+    content.style.display = "block";
+
+    // Urutkan agenda berdasarkan tanggal (terdekat ke terjauh)
+    const sortedAgendas = [...agendas].sort((a, b) => {
+        const dateA = a.date ? new Date(a.date).getTime() : Infinity;
+        const dateB = b.date ? new Date(b.date).getTime() : Infinity;
+        return dateA - dateB;
+    });
+
+    if (sortedAgendas.length === 0) {
+        content.innerHTML = `<div class="empty-state"><h2>Belum ada agenda</h2><p>Tambahkan agenda terlebih dahulu.</p></div>`;
+        return;
+    }
+
+    // CSS Khusus untuk Timeline (Disuntikkan langsung agar mudah)
+    const timelineCSS = `
+        <style>
+            .timeline-container {
+                display: flex;
+                overflow-x: auto;
+                padding: 40px 20px;
+                background: #fff;
+                border-radius: 12px;
+                box-shadow: 0 4px 15px rgba(0,0,0,0.03);
+                margin-top: 20px;
+            }
+            .timeline-item {
+                min-width: 180px;
+                flex: 1;
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+            }
+            .timeline-date {
+                font-weight: 600;
+                margin-bottom: 15px;
+                color: #64748b;
+                font-size: 14px;
+            }
+            .timeline-item.completed .timeline-date {
+                color: #217346;
+            }
+            .timeline-node-wrapper {
+                position: relative;
+                width: 100%;
+                display: flex;
+                justify-content: center;
+                margin-bottom: 15px;
+            }
+            .timeline-line {
+                position: absolute;
+                top: 50%;
+                left: 50%;
+                width: 100%;
+                height: 4px;
+                background-color: #eef2f5;
+                z-index: 1;
+                transform: translateY(-50%);
+                transition: background-color 0.3s;
+            }
+            .timeline-item.completed .timeline-line {
+                background-color: #217346;
+            }
+            .timeline-item:last-child .timeline-line {
+                display: none; /* Hilangkan garis di item terakhir */
+            }
+            .timeline-node {
+                position: relative;
+                z-index: 2;
+                width: 32px;
+                height: 32px;
+                border-radius: 50%;
+                background-color: white;
+                border: 3px solid #eef2f5;
+                display: flex;
+                justify-content: center;
+                align-items: center;
+                cursor: pointer;
+                box-shadow: 0 0 0 6px white;
+                transition: all 0.3s ease;
+            }
+            .timeline-item.completed .timeline-node {
+                background-color: #217346;
+                border-color: #217346;
+            }
+            .timeline-icon {
+                color: transparent;
+                font-size: 14px;
+                font-weight: bold;
+            }
+            .timeline-item.completed .timeline-icon {
+                color: white;
+            }
+            .timeline-content {
+                text-align: center;
+                padding: 0 10px;
+            }
+            .timeline-title {
+                font-size: 14px;
+                font-weight: 700;
+                color: #1e293b;
+                margin-bottom: 5px;
+            }
+            .timeline-subtitle {
+                font-size: 12px;
+                color: #64748b;
+            }
+            /* Scrollbar styling */
+            .timeline-container::-webkit-scrollbar { height: 8px; }
+            .timeline-container::-webkit-scrollbar-thumb { background-color: #cbd5e1; border-radius: 4px; }
+        </style>
+    `;
+
+    let timelineHTML = `<div class="timeline-container">`;
+
+    sortedAgendas.forEach((agenda, index) => {
+        const isCompleted = agenda.timelineCompleted ? true : false;
+        
+        // Format Tanggal (contoh: 20 Jan)
+        let dateStr = "Tanpa Tanggal";
+        if (agenda.date) {
+            dateStr = new Date(agenda.date).toLocaleDateString('id-ID', { month: 'short', day: 'numeric' });
+        }
+
+        timelineHTML += `
+            <div class="timeline-item ${isCompleted ? 'completed' : ''}">
+                <div class="timeline-date">${dateStr}</div>
+                <div class="timeline-node-wrapper">
+                    <div class="timeline-line"></div>
+                    <!-- Node Checklist yang bisa diklik -->
+                    <div class="timeline-node" onclick="toggleTimelineStatus('${agenda.id}')">
+                        <span class="timeline-icon">✓</span>
+                    </div>
+                </div>
+                <div class="timeline-content">
+                    <div class="timeline-title">${agenda.name}</div>
+                    <div class="timeline-subtitle">${agenda.targets ? agenda.targets.length : 0} Target</div>
+                </div>
+            </div>
+        `;
+    });
+
+    timelineHTML += `</div>`;
+    content.innerHTML = timelineCSS + timelineHTML;
+}
+
+// ================================
+// TOGGLE STATUS TIMELINE AGENDA
+// ================================
+function toggleTimelineStatus(agendaId) {
+    const agenda = agendas.find(a => a.id === agendaId);
+    if (agenda) {
+        // Balikkan status timelineCompleted (true jadi false, false jadi true)
+        agenda.timelineCompleted = !agenda.timelineCompleted;
+        saveData(); 
+        renderTimeline(); // Render ulang agar animasi UI berjalan
+    }
 }
