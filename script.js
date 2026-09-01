@@ -16,79 +16,102 @@ function formatDate(date) {
 }
 
 // ================================
-// DASHBOARD (PENGINGAT)
+// HALAMAN DASHBOARD (DENGAN PENGINGAT DEADLINE)
 // ================================
 function renderDashboard() {
-    document.getElementById("pageTitle").innerText = "Dashboard Pengingat";
-    document.getElementById("pageSubtitle").innerText = "Ringkasan agenda dan target terdekat Anda.";
+    document.getElementById("pageTitle").innerText = "Dashboard";
+    document.getElementById("pageSubtitle").innerText = "Ringkasan progress target dan agenda Anda.";
     
     const content = document.getElementById("content");
-    
-    let upcomingAgendas = [];
-    let pendingTargets = [];
-    
-    const today = new Date();
-    today.setHours(0,0,0,0);
+    content.style.display = "block";
 
-    agendas.forEach(a => {
-        // Cek Agenda Terdekat
-        if(a.date) {
-            const aDate = new Date(a.date);
-            if(aDate >= today) upcomingAgendas.push(a);
-        }
-        // Cek Target Terdekat yang belum selesai
-        a.targets.forEach(t => {
-            if(!t.completed && t.deadline) {
-                const tDate = new Date(t.deadline);
-                if(tDate >= today) pendingTargets.push({...t, agendaName: a.name, agendaId: a.id});
+    const today = new Date();
+    today.setHours(0, 0, 0, 0); // Set ke awal hari untuk komparasi akurat
+
+    let overdueTargets = [];
+    let totalTargets = 0;
+    let completedCount = 0;
+
+    // Filter target yang terlewat deadline & belum selesai
+    agendas.forEach(agenda => {
+        agenda.targets.forEach(target => {
+            totalTargets++;
+            if (target.completed) completedCount++;
+
+            if (!target.completed && target.deadline) {
+                const deadlineDate = new Date(target.deadline);
+                deadlineDate.setHours(0, 0, 0, 0);
+                
+                if (deadlineDate < today) {
+                    overdueTargets.push({
+                        ...target,
+                        agendaName: agenda.name,
+                        agendaId: agenda.id
+                    });
+                }
             }
         });
     });
 
-    // Urutkan dari yang paling dekat dengan hari ini
-    upcomingAgendas.sort((a,b) => new Date(a.date) - new Date(b.date));
-    pendingTargets.sort((a,b) => new Date(a.deadline) - new Date(b.deadline));
+    // Urutkan overdue dari tanggal yang paling lama terlewat
+    overdueTargets.sort((a, b) => new Date(a.deadline) - new Date(b.deadline));
 
-    // Ambil 5 teratas
-    upcomingAgendas = upcomingAgendas.slice(0, 5);
-    pendingTargets = pendingTargets.slice(0, 5);
-
-    content.style.display = "block"; // Hapus grid agar full width
-    
-    content.innerHTML = `
-        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 2rem;">
-            
-            <!-- WIDGET AGENDA MENDESAK -->
-            <div style="background: #fff; padding: 2rem; border-radius: 24px; border: 1px solid #F4F5F7; box-shadow: 0 10px 40px rgba(0,0,0,0.03);">
-                <h2 style="margin-bottom: 1.5rem; font-size: 1.3rem; color: #111;">📅 Agenda Terdekat (Hari H)</h2>
-                ${upcomingAgendas.length === 0 ? '<p style="color:#9094A6; font-size: 0.95rem;">Tidak ada agenda di masa mendatang.</p>' : ''}
-                <div style="display: flex; flex-direction: column; gap: 1rem;">
-                    ${upcomingAgendas.map(a => `
-                        <div style="padding: 1.2rem; background: #FAFBFC; border-radius: 16px; border: 1px solid #E5E7EB; cursor:pointer; transition: 0.2s;" onmouseover="this.style.borderColor='#FF6B35'" onmouseout="this.style.borderColor='#E5E7EB'" onclick="openAgenda('${a.id}')">
-                            <h3 style="font-size: 1.1rem; color: #2D3142; margin-bottom: 0.3rem;">${a.name}</h3>
-                            <p style="font-size: 0.9rem; color: #FF6B35; font-weight: 600;">Hari H: ${formatDate(a.date)}</p>
+    // HTML Banner Pengingat Overdue
+    let overdueHTML = "";
+    if (overdueTargets.length > 0) {
+        overdueHTML = `
+            <div style="background: #fff1f2; border-left: 5px solid #e11d48; padding: 1.25rem; border-radius: 12px; margin-bottom: 2rem; box-shadow: 0 4px 15px rgba(225, 29, 72, 0.06);">
+                <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 1rem;">
+                    <h3 style="color: #be123c; margin: 0; font-size: 1.05rem; display: flex; align-items: center; gap: 0.5rem;">
+                        ⚠️ Perhatian: ${overdueTargets.length} Target Melewati Deadline!
+                    </h3>
+                </div>
+                <div style="display: flex; flex-direction: column; gap: 0.75rem;">
+                    ${overdueTargets.map(target => `
+                        <div style="display: flex; align-items: center; justify-content: space-between; background: #ffffff; padding: 0.75rem 1rem; border-radius: 8px; border: 1px solid #fecdd3;">
+                            <div style="display: flex; align-items: center; gap: 0.75rem;">
+                                <input type="checkbox" onchange="toggleTarget('${target.agendaId}', '${target.id}', 'dashboard')">
+                                <div>
+                                    <strong style="color: #1e293b; display: block; font-size: 0.95rem;">${target.name}</strong>
+                                    <span style="font-size: 0.8rem; color: #64748b;">📁 ${target.agendaName}</span>
+                                </div>
+                            </div>
+                            <span style="background: #ffe4e6; color: #e11d48; font-size: 0.78rem; font-weight: 600; padding: 4px 10px; border-radius: 20px;">
+                                Terlewat: ${formatDate(target.deadline)}
+                            </span>
                         </div>
                     `).join('')}
                 </div>
             </div>
+        `;
+    }
 
-            <!-- WIDGET TARGET MENDESAK -->
-            <div style="background: #fff; padding: 2rem; border-radius: 24px; border: 1px solid #F4F5F7; box-shadow: 0 10px 40px rgba(0,0,0,0.03);">
-                <h2 style="margin-bottom: 1.5rem; font-size: 1.3rem; color: #111;">🎯 Deadline Target Terdekat</h2>
-                ${pendingTargets.length === 0 ? '<p style="color:#9094A6; font-size: 0.95rem;">Tidak ada deadline target dalam waktu dekat.</p>' : ''}
-                <div style="display: flex; flex-direction: column; gap: 1rem;">
-                    ${pendingTargets.map(t => `
-                        <div style="padding: 1.2rem; background: #FAFBFC; border-radius: 16px; border: 1px solid #E5E7EB;">
-                            <h3 style="font-size: 1.1rem; color: #2D3142; margin-bottom: 0.3rem;">${t.name}</h3>
-                            <p style="font-size: 0.85rem; color: #9094A6; margin-bottom: 0.3rem;">📁 Agenda: ${t.agendaName}</p>
-                            <p style="font-size: 0.9rem; color: #FF4D4D; font-weight: 600;">Batas: ${formatDate(t.deadline)}</p>
-                        </div>
-                    `).join('')}
-                </div>
+    // Persentase Progress Keseluruhan
+    const progressPercent = totalTargets > 0 ? Math.round((completedCount / totalTargets) * 100) : 0;
+
+    // Tampilan Grid Kartu Ringkasan
+    const statsHTML = `
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1.5rem; margin-bottom: 2rem;">
+            <div style="background: #fff; padding: 1.5rem; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.03);">
+                <span style="color: #64748b; font-size: 0.85rem;">Total Agenda</span>
+                <h2 style="margin: 0.5rem 0 0; color: #1e293b; font-size: 1.8rem;">${agendas.length}</h2>
             </div>
-
+            <div style="background: #fff; padding: 1.5rem; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.03);">
+                <span style="color: #64748b; font-size: 0.85rem;">Total Target</span>
+                <h2 style="margin: 0.5rem 0 0; color: #1e293b; font-size: 1.8rem;">${totalTargets}</h2>
+            </div>
+            <div style="background: #fff; padding: 1.5rem; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.03);">
+                <span style="color: #64748b; font-size: 0.85rem;">Target Selesai</span>
+                <h2 style="margin: 0.5rem 0 0; color: #217346; font-size: 1.8rem;">${completedCount}</h2>
+            </div>
+            <div style="background: #fff; padding: 1.5rem; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.03);">
+                <span style="color: #64748b; font-size: 0.85rem;">Progress Keseluruhan</span>
+                <h2 style="margin: 0.5rem 0 0; color: #2563eb; font-size: 1.8rem;">${progressPercent}%</h2>
+            </div>
         </div>
     `;
+
+    content.innerHTML = overdueHTML + statsHTML;
 }
 
 
@@ -419,7 +442,7 @@ function closeTargetModal() {
 
 
 // ================================
-// TOGGLE TARGET (DENGAN RE-RENDER TAB TERKAIT)
+// TOGGLE TARGET (DENGAN DUKUNGAN DASHBOARD)
 // ================================
 function toggleTarget(agendaId, targetId, currentView = 'agenda') {
     const agenda = agendas.find(a => a.id === agendaId);
@@ -427,7 +450,9 @@ function toggleTarget(agendaId, targetId, currentView = 'agenda') {
     target.completed = !target.completed;
     saveData();
     
-    if(['priority', 'completed', 'all-targets'].includes(currentView)) {
+    if (currentView === 'dashboard') {
+        renderDashboard();
+    } else if (['priority', 'completed', 'all-targets'].includes(currentView)) {
         renderSpecialPage(currentView);
     } else {
         openAgenda(agendaId);
