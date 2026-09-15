@@ -399,7 +399,7 @@ function renderTargets(agenda) {
                 <input type="checkbox" ${target.completed ? "checked" : ""} onchange="toggleTarget('${agenda.id}', '${target.id}')">
                 <div>
                     <h3 class="${target.completed ? "completed" : ""}">${target.name}</h3>
-                    <p>Deadline: ${formatDate(target.deadline)}</p>
+                    <p>Deadline: ${formatDate(target.deadline)} ${target.time ? '— ⏰ ' + target.time : ''}</p>
                 </div>
             </div>
             <div class="target-right">
@@ -533,7 +533,7 @@ document.getElementById("agendaForm").addEventListener("submit", function(e) {
 });
 
 
-// FORM TARGET
+// FORM TARGET (Menerima input jam)
 document.getElementById("targetForm").addEventListener("submit", function(e) {
     e.preventDefault();
     const agendaId = document.getElementById("targetAgendaId").value;
@@ -544,6 +544,7 @@ document.getElementById("targetForm").addEventListener("submit", function(e) {
 
     const name = document.getElementById("targetName").value;
     const deadline = document.getElementById("targetDeadline").value;
+    const time = document.getElementById("targetTime").value; // Ambil nilai jam
     const priority = document.getElementById("targetPriority").checked;
 
     if(targetId) {
@@ -551,10 +552,11 @@ document.getElementById("targetForm").addEventListener("submit", function(e) {
         const target = agenda.targets.find(t => t.id === targetId);
         target.name = name;
         target.deadline = deadline;
+        target.time = time; // Update jam
         target.priority = priority;
     } else {
         // Mode Tambah Baru
-        agenda.targets.push({ id: Date.now().toString(), name, deadline, priority, completed: false });
+        agenda.targets.push({ id: Date.now().toString(), name, deadline, time, priority, completed: false });
     }
 
     saveData();
@@ -588,6 +590,7 @@ function openEditTarget(agendaId, targetId) {
     
     document.getElementById("targetName").value = t.name;
     document.getElementById("targetDeadline").value = t.deadline || "";
+    document.getElementById("targetTime").value = t.time || ""; // Isi jam jika ada
     document.getElementById("targetPriority").checked = t.priority;
     
     document.getElementById("targetModalTitle").innerText = "Edit Target";
@@ -612,9 +615,11 @@ function openTargetModal(agendaId) {
     document.getElementById("targetForm").reset();
     document.getElementById("editTargetId").value = "";
     document.getElementById("targetAgendaId").value = agendaId || currentAgendaId;
+    document.getElementById("targetTime").value = ""; // Kosongkan jam
     document.getElementById("targetModalTitle").innerText = "Tambah Target";
     document.getElementById("targetModal").classList.remove("hidden");
 }
+
 function closeTargetModal() {
     document.getElementById("targetModal").classList.add("hidden");
 }
@@ -967,9 +972,12 @@ function exportCalendarToExcel() {
 
     // Isi Data Target (Dimulai dari Baris 4)
     sortedTargets.forEach((t, index) => {
+        // Gabungkan tanggal dan waktu (jika ada) untuk Excel
+        const tanggalDanJam = t.time ? `${formatDate(t.deadline)} (Jam: ${t.time})` : formatDate(t.deadline);
+        
         wsData.push([
             index + 1,
-            formatDate(t.deadline),
+            tanggalDanJam,
             t.name,
             t.priority ? "⭐ Ya" : "-",
             "[    ]", // Kotak checklist fisik
