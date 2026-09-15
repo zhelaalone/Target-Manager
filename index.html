@@ -94,8 +94,16 @@
                 <label>Target</label>
                 <input type="text" id="targetName" placeholder="Contoh: Menyelesaikan Bab 1" required>
 
-                <label>Deadline Target</label>
-                <input type="date" id="targetDeadline" required>
+                <div style="display: flex; gap: 1rem;">
+                    <div style="flex: 1;">
+                        <label>Deadline Target</label>
+                        <input type="date" id="targetDeadline" required>
+                    </div>
+                    <div style="flex: 1;">
+                        <label>Jam (Opsional)</label>
+                        <input type="time" id="targetTime">
+                    </div>
+                </div>
 
                 <label class="checkbox">
                     <input type="checkbox" id="targetPriority">
