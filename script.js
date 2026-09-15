@@ -1,5 +1,8 @@
 let agendas = JSON.parse(localStorage.getItem("targetManager")) || [];
 let currentAgendaId = null;
+let currentCalMonth = new Date().getMonth();
+let currentCalYear = new Date().getFullYear();
+let selectedFilterDate = null;
 
 // ================================
 // SAVE DATA & FORMAT DATE
@@ -13,6 +16,23 @@ function formatDate(date) {
     return new Date(date).toLocaleDateString("id-ID", {
         day: "numeric", month: "long", year: "numeric"
     });
+}
+
+function getCountdownText(dateString) {
+    if (!dateString) return "-";
+    const targetDate = new Date(dateString);
+    targetDate.setHours(0, 0, 0, 0);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    const diffTime = targetDate - today;
+    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+
+    if (diffDays === 0) return "Hari Ini!";
+    if (diffDays === 1) return "Besok";
+    if (diffDays > 1) return `${diffDays} Hari Lagi`;
+    if (diffDays < 0) return `Terlewat ${Math.abs(diffDays)} Hari`;
+    return "-";
 }
 
 // ================================
@@ -116,7 +136,7 @@ function renderDashboard() {
 
 
 // ================================
-// RENDER DAFTAR AGENDA
+// RENDER DAFTAR AGENDA (DENGAN COUNTDOWN)
 // ================================
 function renderAgendas() {
     document.getElementById("pageTitle").innerText = "Semua Agenda";
@@ -136,21 +156,68 @@ function renderAgendas() {
         const priority = agenda.targets.filter(t => t.priority).length;
         const progress = total === 0 ? 0 : Math.round((completed / total) * 100);
 
+        // 1. Hitung Countdown Agenda
+        const agendaCountdown = getCountdownText(agenda.date);
+        const isAgendaOverdue = agendaCountdown.includes("Terlewat");
+
+        // 2. Ambil maksimal 3 target yang belum selesai, urutkan dari deadline terdekat
+        const pendingTargets = agenda.targets
+            .filter(t => !t.completed && t.deadline)
+            .sort((a, b) => new Date(a.deadline) - new Date(b.deadline))
+            .slice(0, 3); 
+
+        // 3. Render HTML untuk List Target Terdekat di dalam Card
+        let miniTargetHTML = "";
+        if (pendingTargets.length > 0) {
+            miniTargetHTML = `
+                <div class="mini-target-list">
+                    <p style="font-size:0.75rem; color:#9094A6; margin-bottom:0.2rem; font-weight:600; text-transform:uppercase;">⏳ Target Terdekat:</p>
+                    ${pendingTargets.map(t => {
+                        const tCountdown = getCountdownText(t.deadline);
+                        const isTOverdue = tCountdown.includes("Terlewat");
+                        return `
+                        <div class="mini-target-item">
+                            <span class="mini-target-name" title="${t.name}">${t.priority ? '⭐ ' : ''}${t.name}</span>
+                            <span class="mini-target-cd ${isTOverdue ? 'overdue' : ''}">${tCountdown}</span>
+                        </div>
+                        `;
+                    }).join("")}
+                </div>`;
+        } else if (total > 0 && progress === 100) {
+            miniTargetHTML = `<div class="mini-target-list" style="text-align:center; background: #f0fdf4; color: #166534; border-color: #bbf7d0;">🎉 Semua target selesai!</div>`;
+        } else {
+            miniTargetHTML = `<div class="mini-target-list" style="text-align:center; color: #9094A6; font-style: italic;">Belum ada target untuk dikerjakan.</div>`;
+        }
+
+        // 4. Susun Card Utama
         const card = document.createElement("div");
         card.className = "agenda-card";
         card.innerHTML = `
             <div class="agenda-card-header">
-                <div>
-                    <h2>${agenda.name}</h2>
-                    <p style="color: #FF6B35; font-size:0.85rem; font-weight:600; margin-bottom: 0.3rem;">Hari H: ${formatDate(agenda.date)}</p>
+                <div style="width: 100%;">
+                    <div style="display:flex; justify-content:space-between; align-items:flex-start;">
+                        <h2 style="margin-right:10px;">${agenda.name}</h2>
+                        <div style="display: flex; gap: 0.5rem; align-items:flex-start; flex-shrink:0;">
+                            <button class="edit-btn" onclick="openEditAgenda(event, '${agenda.id}')" style="background:#FFF0E5; color:#FF6B35; border:none; width:32px; height:32px; border-radius:8px; cursor:pointer; display:flex; align-items:center; justify-content:center;">✏️</button>
+                            <button class="delete-btn" onclick="deleteAgenda(event, '${agenda.id}')" style="width:32px; height:32px; border-radius:8px; display:flex; align-items:center; justify-content:center;">🗑</button>
+                        </div>
+                    </div>
+                    
+                    <div style="display:flex; align-items:center; gap: 10px; margin: 0.5rem 0;">
+                        <span class="countdown-badge ${isAgendaOverdue ? 'overdue' : ''}">
+                            ⏱️ ${agendaCountdown}
+                        </span>
+                        <span style="font-size:0.8rem; color:#9094A6;">(${formatDate(agenda.date)})</span>
+                    </div>
+                    
                     <p>${agenda.description || "Tidak ada deskripsi"}</p>
                 </div>
-                <div style="display: flex; gap: 0.5rem; align-items:flex-start;">
-                    <button class="edit-btn" onclick="openEditAgenda(event, '${agenda.id}')" style="background:#FFF0E5; color:#FF6B35; border:none; width:36px; height:36px; border-radius:10px; cursor:pointer;">✏️</button>
-                    <button class="delete-btn" onclick="deleteAgenda(event, '${agenda.id}')">🗑</button>
-                </div>
             </div>
-            <div class="agenda-info">
+            
+            <!-- Memasukkan list target terdekat di sini -->
+            ${miniTargetHTML}
+
+            <div class="agenda-info" style="margin-top:auto;">
                 <span>${total} Target</span>
                 <span>⭐ ${priority} Prioritas</span>
             </div>
@@ -166,51 +233,165 @@ function renderAgendas() {
 
 
 // ================================
-// OPEN DETAIL AGENDA
+// OPEN DETAIL AGENDA (DENGAN KALENDER FILTER & EXPORT)
 // ================================
 function openAgenda(id) {
     currentAgendaId = id;
     const agenda = agendas.find(item => item.id === id);
     if (!agenda) return;
 
+    // Reset filter & kalender setiap membuka agenda baru
+    currentCalMonth = new Date().getMonth();
+    currentCalYear = new Date().getFullYear();
+    selectedFilterDate = null;
+
     document.getElementById("pageTitle").innerText = agenda.name;
     document.getElementById("pageSubtitle").innerText = "Hari H: " + formatDate(agenda.date);
     
     const content = document.getElementById("content");
-    content.style.display = "block"; // Reset ke block untuk halaman detail
+    content.style.display = "block";
+    
     content.innerHTML = `
         <div class="back-button">
             <button onclick="renderAgendas()">← Kembali ke Daftar Agenda</button>
         </div>
-        <div class="agenda-detail">
-            <div class="detail-header">
-                <div>
-                    <h1>${agenda.name}</h1>
-                    <p>${agenda.description || "Tidak ada deskripsi"}</p>
-                </div>
-                <button class="btn-primary" onclick="openTargetModal('${agenda.id}')">+ Tambah Target</button>
+        <div class="detail-header">
+            <div>
+                <h1>${agenda.name}</h1>
+                <p>${agenda.description || "Tidak ada deskripsi"}</p>
             </div>
-            <div id="targetList"></div>
+            <button class="btn-primary" onclick="openTargetModal('${agenda.id}')">+ Tambah Target</button>
+        </div>
+        
+        <div class="agenda-detail-layout">
+            <!-- Widget Kalender di Kiri -->
+            <div class="calendar-widget">
+                <div class="cal-header">
+                    <button onclick="changeCalMonth(-1)">❮</button>
+                    <span id="calMonthYear">Bulan Tahun</span>
+                    <button onclick="changeCalMonth(1)">❯</button>
+                </div>
+                <div class="cal-days">
+                    <div>Min</div><div>Sen</div><div>Sel</div><div>Rab</div><div>Kam</div><div>Jum</div><div>Sab</div>
+                </div>
+                <div class="cal-grid" id="calGrid"></div>
+                
+                <!-- Grup Tombol Bawah Kalender -->
+                <div style="margin-top: 1.5rem; display: flex; flex-direction: column; gap: 0.5rem;">
+                    <button onclick="clearDateFilter()" style="background: transparent; border: 1px dashed #E5E7EB; padding: 0.5rem 1rem; border-radius: 8px; font-size: 0.8rem; cursor: pointer; color: #9094A6; width: 100%; transition: 0.2s;">
+                        Tampilkan Semua Target
+                    </button>
+                    <button onclick="exportCalendarToExcel()" style="background: #217346; color: white; border: none; padding: 0.6rem 1rem; border-radius: 8px; font-size: 0.85rem; font-weight: 600; cursor: pointer; width: 100%; transition: 0.2s; box-shadow: 0 4px 10px rgba(33, 115, 70, 0.2);">
+                        📊 Cetak Jadwal (Excel)
+                    </button>
+                </div>
+            </div>
+            
+            <!-- Daftar Target di Kanan -->
+            <div>
+                <h3 id="targetListTitle" style="margin-bottom: 1.2rem; color: #111; font-size: 1.2rem;">Semua Target</h3>
+                <div id="targetList"></div>
+            </div>
         </div>
     `;
+    
+    renderAgendaCalendar(agenda);
     renderTargets(agenda);
 }
 
+// ================================
+// LOGIKA KALENDER DETAIL AGENDA
+// ================================
+function changeCalMonth(dir) {
+    currentCalMonth += dir;
+    if (currentCalMonth < 0) {
+        currentCalMonth = 11;
+        currentCalYear--;
+    } else if (currentCalMonth > 11) {
+        currentCalMonth = 0;
+        currentCalYear++;
+    }
+    const agenda = agendas.find(a => a.id === currentAgendaId);
+    renderAgendaCalendar(agenda);
+}
+
+function clearDateFilter() {
+    selectedFilterDate = null;
+    const agenda = agendas.find(a => a.id === currentAgendaId);
+    renderAgendaCalendar(agenda);
+    renderTargets(agenda);
+}
+
+function filterByDate(dateStr) {
+    selectedFilterDate = dateStr;
+    const agenda = agendas.find(a => a.id === currentAgendaId);
+    renderAgendaCalendar(agenda);
+    renderTargets(agenda);
+}
+
+function renderAgendaCalendar(agenda) {
+    const calMonthYear = document.getElementById("calMonthYear");
+    const calGrid = document.getElementById("calGrid");
+    if (!calMonthYear || !calGrid) return;
+
+    const months = ["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember"];
+    calMonthYear.innerText = `${months[currentCalMonth]} ${currentCalYear}`;
+
+    calGrid.innerHTML = "";
+
+    const firstDay = new Date(currentCalYear, currentCalMonth, 1).getDay();
+    const daysInMonth = new Date(currentCalYear, currentCalMonth + 1, 0).getDate();
+
+    // Mapping tanggal mana saja yang memiliki target
+    const targetDates = {};
+    agenda.targets.forEach(t => {
+        if (t.deadline) targetDates[t.deadline] = true;
+    });
+
+    // Render kotak kosong sebelum tanggal 1
+    for (let i = 0; i < firstDay; i++) {
+        calGrid.innerHTML += `<div class="cal-date empty"></div>`;
+    }
+
+    // Render tanggal
+    for (let i = 1; i <= daysInMonth; i++) {
+        // Format YYYY-MM-DD agar sama dengan nilai input date HTML
+        const dateStr = `${currentCalYear}-${String(currentCalMonth+1).padStart(2, '0')}-${String(i).padStart(2, '0')}`;
+        
+        let classes = "cal-date";
+        if (targetDates[dateStr]) classes += " has-target";
+        if (selectedFilterDate === dateStr) classes += " active";
+
+        calGrid.innerHTML += `<div class="${classes}" onclick="filterByDate('${dateStr}')">${i}</div>`;
+    }
+}
 
 // ================================
-// RENDER TARGET DALAM AGENDA
+// RENDER TARGET (MENDUKUNG FILTER KALENDER)
 // ================================
 function renderTargets(agenda) {
     const list = document.getElementById("targetList");
+    const title = document.getElementById("targetListTitle");
     if (!list) return;
     list.innerHTML = "";
 
-    if (agenda.targets.length === 0) {
-        list.innerHTML = `<div class="empty-state"><h3>Belum ada target</h3><p>Tambahkan target untuk agenda ini.</p></div>`;
+    // Logika Filter
+    let filteredTargets = agenda.targets;
+    if (selectedFilterDate) {
+        filteredTargets = agenda.targets.filter(t => t.deadline === selectedFilterDate);
+        title.innerHTML = `Target untuk: <span style="color:#FF6B35;">${formatDate(selectedFilterDate)}</span>`;
+    } else {
+        title.innerText = "Semua Target";
+        // Urutkan default dari deadline terdekat
+        filteredTargets.sort((a, b) => new Date(a.deadline) - new Date(b.deadline));
+    }
+
+    if (filteredTargets.length === 0) {
+        list.innerHTML = `<div class="empty-state"><h3>Kosong</h3><p>Tidak ada target di tanggal ini.</p></div>`;
         return;
     }
 
-    agenda.targets.forEach(target => {
+    filteredTargets.forEach(target => {
         const item = document.createElement("div");
         item.className = "target-item";
         item.innerHTML = `
@@ -223,8 +404,6 @@ function renderTargets(agenda) {
             </div>
             <div class="target-right">
                 ${target.priority ? `<span class="priority-badge">⭐ Prioritas</span>` : `<button class="priority-btn" onclick="togglePriority('${agenda.id}', '${target.id}')">☆ Prioritas</button>`}
-                
-                <!-- Tombol Edit & Delete Target -->
                 <div style="display:flex; gap:0.5rem;">
                     <button onclick="openEditTarget('${agenda.id}', '${target.id}')" style="background:#FFF0E5; color:#FF6B35; border:none; width:36px; height:36px; border-radius:10px; cursor:pointer;">✏️</button>
                     <button onclick="deleteTarget('${agenda.id}', '${target.id}')" style="background:#FFF0F0; color:#FF4D4D; border:none; width:36px; height:36px; border-radius:10px; cursor:pointer;">🗑</button>
@@ -764,3 +943,109 @@ window.addEventListener('resize', () => {
         fixTimelineLines();
     }
 });
+
+// ================================
+// EXPORT EXCEL JADWAL (SIAP CETAK DENGAN BORDER & JUDUL)
+// ================================
+function exportCalendarToExcel() {
+    const agenda = agendas.find(a => a.id === currentAgendaId);
+    if (!agenda) return;
+
+    if (agenda.targets.length === 0) {
+        alert("Belum ada target di agenda ini untuk dicetak.");
+        return;
+    }
+
+    const sortedTargets = [...agenda.targets].sort((a, b) => new Date(a.deadline) - new Date(b.deadline));
+
+    // 1. Susun Data (Array of Arrays) agar bisa menempatkan Judul di atas
+    let wsData = [
+        [`JADWAL TARGET: ${agenda.name.toUpperCase()}`], // Baris 1: Judul
+        [], // Baris 2: Kosong sebagai jarak
+        ["No", "Tanggal", "Target Pekerjaan", "Prioritas", "Checklist", "Catatan"] // Baris 3: Header Tabel
+    ];
+
+    // Isi Data Target (Dimulai dari Baris 4)
+    sortedTargets.forEach((t, index) => {
+        wsData.push([
+            index + 1,
+            formatDate(t.deadline),
+            t.name,
+            t.priority ? "⭐ Ya" : "-",
+            "[    ]", // Kotak checklist fisik
+            ""       // Catatan kosong
+        ]);
+    });
+
+    // Buat Worksheet
+    const ws = XLSX.utils.aoa_to_sheet(wsData);
+
+    // 2. Gabungkan Cell Judul (Merge dari kolom A sampai F)
+    ws['!merges'] = [
+        { s: { r: 0, c: 0 }, e: { r: 0, c: 5 } } 
+    ];
+
+    // 3. Atur Lebar Kolom agar proporsional di kertas A4
+    ws['!cols'] = [
+        {wch: 5},   // A: No
+        {wch: 22},  // B: Tanggal
+        {wch: 40},  // C: Target Pekerjaan
+        {wch: 12},  // D: Prioritas
+        {wch: 15},  // E: Checklist
+        {wch: 25}   // F: Catatan
+    ];
+
+    // 4. Atur Tinggi Baris (Biar lega saat ditulis tangan)
+    ws['!rows'] = [{hpt: 35}, {hpt: 15}]; // Baris judul (tinggi 35), jarak (tinggi 15)
+    for(let i = 2; i < wsData.length; i++) {
+        ws['!rows'].push({hpt: 25}); // Baris tabel (tinggi 25)
+    }
+
+    // 5. STYLING: Border dan Warna
+    const borderStyle = {
+        top: { style: "thin", color: { auto: 1 } },
+        bottom: { style: "thin", color: { auto: 1 } },
+        left: { style: "thin", color: { auto: 1 } },
+        right: { style: "thin", color: { auto: 1 } }
+    };
+
+    // Menerapkan gaya (style) ke masing-masing cell
+    for (let R = 0; R < wsData.length; ++R) {
+        for (let C = 0; C < 6; ++C) {
+            let cellAddress = XLSX.utils.encode_cell({r: R, c: C});
+            
+            // Buat cell kosong jika belum ada objeknya (dibutuhkan untuk render border)
+            if (!ws[cellAddress]) ws[cellAddress] = { t: 's', v: '' };
+
+            if (R === 0) {
+                // Style Judul Utama
+                ws[cellAddress].s = {
+                    font: { bold: true, sz: 14, color: { rgb: "FF6B35" } },
+                    alignment: { horizontal: "center", vertical: "center" }
+                };
+            } else if (R === 2) {
+                // Style Header Tabel (Gelap)
+                ws[cellAddress].s = {
+                    font: { bold: true, color: { rgb: "FFFFFF" } },
+                    fill: { fgColor: { rgb: "2D3142" } },
+                    alignment: { horizontal: "center", vertical: "center" },
+                    border: borderStyle
+                };
+            } else if (R > 2) {
+                // Style Isi Data Tabel (Rata Kiri untuk Nama Target & Catatan)
+                const isLeftAlign = (C === 2 || C === 5);
+                ws[cellAddress].s = {
+                    alignment: { horizontal: isLeftAlign ? "left" : "center", vertical: "center", wrapText: true },
+                    border: borderStyle
+                };
+            }
+        }
+    }
+
+    // 6. Buat File dan Download
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Jadwal Target");
+    
+    const fileName = `Jadwal_${agenda.name.replace(/\s+/g, '_')}.xlsx`;
+    XLSX.writeFile(wb, fileName);
+}
