@@ -36,7 +36,7 @@ function getCountdownText(dateString) {
 }
 
 // ================================
-// HALAMAN DASHBOARD (DENGAN PENGINGAT DEADLINE)
+// HALAMAN DASHBOARD (DENGAN PENGINGAT DEADLINE, FILTER ARSIP, & JAM)
 // ================================
 function renderDashboard() {
     document.getElementById("pageTitle").innerText = "Dashboard";
@@ -52,8 +52,11 @@ function renderDashboard() {
     let totalTargets = 0;
     let completedCount = 0;
 
+    // REVISI 1: Terapkan Filter Arsip (Hanya proses agenda yang belum diarsipkan)
+    const activeAgendas = agendas.filter(a => !a.isArchived);
+
     // Filter target yang terlewat deadline & belum selesai
-    agendas.forEach(agenda => {
+    activeAgendas.forEach(agenda => {
         agenda.targets.forEach(target => {
             totalTargets++;
             if (target.completed) completedCount++;
@@ -87,7 +90,10 @@ function renderDashboard() {
                     </h3>
                 </div>
                 <div style="display: flex; flex-direction: column; gap: 0.75rem;">
-                    ${overdueTargets.map(target => `
+                    ${overdueTargets.map(target => {
+                        // REVISI 2: Menampilkan indikator Jam jika ada
+                        const timeDisplay = target.time ? ` ⏰ ${target.time}` : "";
+                        return `
                         <div style="display: flex; align-items: center; justify-content: space-between; background: #ffffff; padding: 0.75rem 1rem; border-radius: 8px; border: 1px solid #fecdd3;">
                             <div style="display: flex; align-items: center; gap: 0.75rem;">
                                 <input type="checkbox" onchange="toggleTarget('${target.agendaId}', '${target.id}', 'dashboard')">
@@ -97,10 +103,11 @@ function renderDashboard() {
                                 </div>
                             </div>
                             <span style="background: #ffe4e6; color: #e11d48; font-size: 0.78rem; font-weight: 600; padding: 4px 10px; border-radius: 20px;">
-                                Terlewat: ${formatDate(target.deadline)}
+                                Terlewat: ${formatDate(target.deadline)}${timeDisplay}
                             </span>
                         </div>
-                    `).join('')}
+                        `;
+                    }).join('')}
                 </div>
             </div>
         `;
@@ -113,8 +120,9 @@ function renderDashboard() {
     const statsHTML = `
         <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1.5rem; margin-bottom: 2rem;">
             <div style="background: #fff; padding: 1.5rem; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.03);">
-                <span style="color: #64748b; font-size: 0.85rem;">Total Agenda</span>
-                <h2 style="margin: 0.5rem 0 0; color: #1e293b; font-size: 1.8rem;">${agendas.length}</h2>
+                <span style="color: #64748b; font-size: 0.85rem;">Total Agenda Aktif</span>
+                <!-- REVISI 3: Menghitung activeAgendas, bukan semua agendas -->
+                <h2 style="margin: 0.5rem 0 0; color: #1e293b; font-size: 1.8rem;">${activeAgendas.length}</h2>
             </div>
             <div style="background: #fff; padding: 1.5rem; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.03);">
                 <span style="color: #64748b; font-size: 0.85rem;">Total Target</span>
@@ -136,7 +144,7 @@ function renderDashboard() {
 
 
 // ================================
-// RENDER DAFTAR AGENDA (DENGAN COUNTDOWN)
+// RENDER DAFTAR AGENDA (DENGAN COUNTDOWN & ARSIP)
 // ================================
 function renderAgendas() {
     document.getElementById("pageTitle").innerText = "Semua Agenda";
@@ -145,12 +153,15 @@ function renderAgendas() {
     content.style.display = "grid"; // Kembalikan ke format Grid
     content.innerHTML = "";
 
-    if (agendas.length === 0) {
-        content.innerHTML = `<div class="empty-state"><h2>Belum ada agenda</h2><p>Tambahkan agenda pertama Anda.</p></div>`;
+    // FILTER: Hanya tampilkan agenda yang BELUM diarsipkan
+    const activeAgendas = agendas.filter(a => !a.isArchived);
+
+    if (activeAgendas.length === 0) {
+        content.innerHTML = `<div class="empty-state"><h2>Belum ada agenda aktif</h2><p>Tambahkan agenda pertama Anda.</p></div>`;
         return;
     }
 
-    agendas.forEach(agenda => {
+    activeAgendas.forEach(agenda => {
         const total = agenda.targets.length;
         const completed = agenda.targets.filter(t => t.completed).length;
         const priority = agenda.targets.filter(t => t.priority).length;
@@ -175,9 +186,12 @@ function renderAgendas() {
                     ${pendingTargets.map(t => {
                         const tCountdown = getCountdownText(t.deadline);
                         const isTOverdue = tCountdown.includes("Terlewat");
+                        // Tambahkan keterangan jam jika diisi
+                        const timeDisplay = t.time ? ` (${t.time})` : "";
+                        
                         return `
                         <div class="mini-target-item">
-                            <span class="mini-target-name" title="${t.name}">${t.priority ? '⭐ ' : ''}${t.name}</span>
+                            <span class="mini-target-name" title="${t.name}">${t.priority ? '⭐ ' : ''}${t.name}${timeDisplay}</span>
                             <span class="mini-target-cd ${isTOverdue ? 'overdue' : ''}">${tCountdown}</span>
                         </div>
                         `;
@@ -197,9 +211,12 @@ function renderAgendas() {
                 <div style="width: 100%;">
                     <div style="display:flex; justify-content:space-between; align-items:flex-start;">
                         <h2 style="margin-right:10px;">${agenda.name}</h2>
+                        
+                        <!-- Grup Tombol Aksi (Edit, Arsip, Hapus) -->
                         <div style="display: flex; gap: 0.5rem; align-items:flex-start; flex-shrink:0;">
-                            <button class="edit-btn" onclick="openEditAgenda(event, '${agenda.id}')" style="background:#FFF0E5; color:#FF6B35; border:none; width:32px; height:32px; border-radius:8px; cursor:pointer; display:flex; align-items:center; justify-content:center;">✏️</button>
-                            <button class="delete-btn" onclick="deleteAgenda(event, '${agenda.id}')" style="width:32px; height:32px; border-radius:8px; display:flex; align-items:center; justify-content:center;">🗑</button>
+                            <button class="edit-btn" onclick="openEditAgenda(event, '${agenda.id}')" style="background:#FFF0E5; color:#FF6B35; border:none; width:32px; height:32px; border-radius:8px; cursor:pointer; display:flex; align-items:center; justify-content:center;" title="Edit">✏️</button>
+                            <button onclick="toggleArchive(event, '${agenda.id}')" style="background:#EBF5FF; color:#3B82F6; border:none; width:32px; height:32px; border-radius:8px; cursor:pointer; display:flex; align-items:center; justify-content:center;" title="Arsipkan">📦</button>
+                            <button class="delete-btn" onclick="deleteAgenda(event, '${agenda.id}')" style="width:32px; height:32px; border-radius:8px; display:flex; align-items:center; justify-content:center;" title="Hapus">🗑</button>
                         </div>
                     </div>
                     
@@ -416,9 +433,6 @@ function renderTargets(agenda) {
 
 
 // ================================
-// HALAMAN PRIORITAS & SELESAI
-// ================================
-// ================================
 // HALAMAN REKAP TARGET (PRIORITAS, SELESAI, & SEMUA TARGET)
 // ================================
 function renderSpecialPage(type) {
@@ -442,25 +456,22 @@ function renderSpecialPage(type) {
     const content = document.getElementById("content");
     content.style.display = "block";
     
-    // Tombol Export Excel khusus tab Prioritas
-    let exportBtn = "";
-    if (type === 'priority') {
-        exportBtn = `
-            <div style="display: flex; justify-content: flex-end; margin-bottom: 1.5rem;">
-                <button class="btn-primary" onclick="exportPriorityToExcel()" style="background-color: #217346; box-shadow: 0 6px 20px rgba(33, 115, 70, 0.3);">
-                    📊 Export Excel
-                </button>
-            </div>
-        `;
-    }
+    // Tombol Export Excel khusus tab Rekap
+    let exportBtn = `
+        <div style="display: flex; justify-content: flex-end; margin-bottom: 1.5rem;">
+            <button class="btn-primary" onclick="exportFilteredTargetsToExcel('${type}')" style="background-color: #217346; box-shadow: 0 6px 20px rgba(33, 115, 70, 0.3);">
+                📊 Export Excel
+            </button>
+        </div>
+    `;
 
     content.innerHTML = exportBtn + `<div class="target-list-page" style="display:flex; flex-direction:column; gap:1rem;"></div>`;
     const container = content.querySelector(".target-list-page");
     
     let filteredTargets = [];
 
-    // Mengumpulkan target berdasarkan tab yang dibuka
-    agendas.forEach(agenda => {
+    // Mengumpulkan target yang BELUM DIARSIP berdasarkan tab yang dibuka
+    agendas.filter(a => !a.isArchived).forEach(agenda => {
         agenda.targets.forEach(target => {
             if (type === 'priority' && target.priority && !target.completed) {
                 filteredTargets.push({...target, agendaName: agenda.name, agendaId: agenda.id});
@@ -485,16 +496,21 @@ function renderSpecialPage(type) {
     }
 
     filteredTargets.forEach(target => {
+        // Menyiapkan teks jam jika waktu diisi
+        const timeDisplay = target.time ? ` — ⏰ ${target.time}` : "";
+
         container.innerHTML += `
             <div class="target-item">
                 <div class="target-left">
                     <input type="checkbox" ${target.completed ? "checked" : ""} onchange="toggleTarget('${target.agendaId}', '${target.id}', '${type}')">
                     <div>
                         <h3 class="${target.completed ? "completed" : ""}">${target.name}</h3>
-                        <p>📁 ${target.agendaName} | Deadline: ${formatDate(target.deadline)}</p>
+                        <p>📁 ${target.agendaName} | Deadline: ${formatDate(target.deadline)}${timeDisplay}</p>
                     </div>
                 </div>
-                ${target.priority ? `<span class="priority-badge">⭐ Prioritas</span>` : ''}
+                <div class="target-right">
+                    ${target.priority ? `<span class="priority-badge">⭐ Prioritas</span>` : ''}
+                </div>
             </div>
         `;
     });
@@ -683,6 +699,7 @@ document.querySelectorAll(".nav-item").forEach(button => {
         else if (page === "all-targets") renderSpecialPage('all-targets');
         else if (page === "priority") renderSpecialPage('priority');
         else if (page === "completed") renderSpecialPage('completed');
+        else if (page === "archive") renderArchive(); // <--- TAMBAHKAN BARIS INI 
     });
 });
 
@@ -693,63 +710,134 @@ document.querySelectorAll(".nav-item").forEach(button => {
 renderDashboard();
 
 // ================================
-// EXPORT EXCEL TARGET PRIORITAS
+// EXPORT EXCEL SEMUA TARGET / PRIORITAS / SELESAI (SIAP CETAK)
 // ================================
-function exportPriorityToExcel() {
-    // 1. Kumpulkan data mentah terlebih dahulu
-    let priorityDataRaw = [];
+function exportFilteredTargetsToExcel(type) {
+    let filteredTargets = [];
+    let judulExcel = "";
 
+    // 1. Kumpulkan data berdasarkan tipe tab yang sedang dibuka
     agendas.forEach(agenda => {
         agenda.targets.forEach(target => {
-            if (target.priority) {
-                priorityDataRaw.push({
-                    agendaName: agenda.name,
-                    agendaDate: agenda.date,
-                    targetName: target.name,
-                    targetDeadline: target.deadline,
-                    completed: target.completed
-                });
+            if (type === 'priority' && target.priority && !target.completed) {
+                filteredTargets.push({...target, agendaName: agenda.name});
+            } else if (type === 'completed' && target.completed) {
+                filteredTargets.push({...target, agendaName: agenda.name});
+            } else if (type === 'all-targets') {
+                filteredTargets.push({...target, agendaName: agenda.name});
             }
         });
     });
 
-    if (priorityDataRaw.length === 0) {
-        alert("Tidak ada target prioritas untuk diekspor.");
+    if (filteredTargets.length === 0) {
+        alert("Tidak ada data target untuk diekspor.");
         return;
     }
 
-    // 2. --- LOGIKA PENGURUTAN TANGGAL UNTUK EXCEL ---
-    // Mengurutkan berdasarkan Target Deadline (dari yang terdekat)
-    priorityDataRaw.sort((a, b) => new Date(a.targetDeadline) - new Date(b.targetDeadline));
+    // Urutkan berdasarkan tanggal terdekat
+    filteredTargets.sort((a, b) => {
+        const dateA = a.deadline ? new Date(a.deadline).getTime() : Infinity;
+        const dateB = b.deadline ? new Date(b.deadline).getTime() : Infinity;
+        return dateA - dateB;
+    });
 
-    // 3. Format ulang data mentah yang sudah terurut menjadi format rapi untuk Excel
-    let priorityData = priorityDataRaw.map((data, index) => ({
-        "No": index + 1,
-        "Nama Agenda": data.agendaName,
-        "Hari H Agenda": formatDate(data.agendaDate),
-        "Nama Target": data.targetName,
-        "Deadline Target": formatDate(data.targetDeadline),
-        "Status": data.completed ? "Selesai" : "Belum Selesai"
-    }));
+    // Menentukan judul tabel di dalam Excel
+    if (type === 'priority') judulExcel = "REKAP TARGET PRIORITAS";
+    else if (type === 'completed') judulExcel = "REKAP TARGET SELESAI";
+    else judulExcel = "REKAP SEMUA TARGET";
 
-    // 4. Ubah data ke format Worksheet (SheetJS)
-    const ws = XLSX.utils.json_to_sheet(priorityData);
-
-    // 5. Atur lebar kolom agar rapi saat dibuka di Excel
-    const wscols = [
-        {wch: 5},  // No
-        {wch: 25}, // Nama Agenda
-        {wch: 20}, // Hari H
-        {wch: 35}, // Nama Target
-        {wch: 20}, // Deadline Target
-        {wch: 15}  // Status
+    // 2. Susun format Array of Arrays
+    let wsData = [
+        [judulExcel], // Baris 1: Judul
+        [], // Baris 2: Kosong untuk spasi
+        ["No", "Nama Agenda", "Target Pekerjaan", "Deadline", "Jam", "Prioritas", "Status"] // Baris 3: Header
     ];
-    ws['!cols'] = wscols;
 
-    // 6. Buat file Excel dan Trigger Download
+    // Isi Data baris demi baris
+    filteredTargets.forEach((t, index) => {
+        wsData.push([
+            index + 1,
+            t.agendaName,
+            t.name,
+            formatDate(t.deadline),
+            t.time ? t.time : "-",
+            t.priority ? "⭐ Ya" : "-",
+            t.completed ? "Selesai" : "Proses"
+        ]);
+    });
+
+    // Buat worksheet
+    const ws = XLSX.utils.aoa_to_sheet(wsData);
+
+    // 3. Gabungkan Cell Judul (Merge kolom A sampai G)
+    ws['!merges'] = [
+        { s: { r: 0, c: 0 }, e: { r: 0, c: 6 } } 
+    ];
+
+    // 4. Atur Lebar Kolom agar rapi (Proporsional)
+    ws['!cols'] = [
+        {wch: 5},   // A: No
+        {wch: 25},  // B: Nama Agenda
+        {wch: 40},  // C: Target Pekerjaan
+        {wch: 20},  // D: Deadline
+        {wch: 10},  // E: Jam
+        {wch: 12},  // F: Prioritas
+        {wch: 15}   // G: Status
+    ];
+
+    // 5. Atur Tinggi Baris (Agar tidak terlalu mepet)
+    ws['!rows'] = [{hpt: 35}, {hpt: 15}]; 
+    for(let i = 2; i < wsData.length; i++) {
+        ws['!rows'].push({hpt: 25});
+    }
+
+    // 6. STYLING: Tambahkan Border, Warna, dan Alignment
+    const borderStyle = {
+        top: { style: "thin", color: { auto: 1 } },
+        bottom: { style: "thin", color: { auto: 1 } },
+        left: { style: "thin", color: { auto: 1 } },
+        right: { style: "thin", color: { auto: 1 } }
+    };
+
+    for (let R = 0; R < wsData.length; ++R) {
+        for (let C = 0; C < 7; ++C) {
+            let cellAddress = XLSX.utils.encode_cell({r: R, c: C});
+            
+            // Generate cell kosong jika undifined (agar border tetap muncul sempurna)
+            if (!ws[cellAddress]) ws[cellAddress] = { t: 's', v: '' };
+
+            if (R === 0) {
+                // Style Judul
+                ws[cellAddress].s = {
+                    font: { bold: true, sz: 14, color: { rgb: "FF6B35" } },
+                    alignment: { horizontal: "center", vertical: "center" }
+                };
+            } else if (R === 2) {
+                // Style Header Tabel (Background Gelap, Teks Putih)
+                ws[cellAddress].s = {
+                    font: { bold: true, color: { rgb: "FFFFFF" } },
+                    fill: { fgColor: { rgb: "2D3142" } },
+                    alignment: { horizontal: "center", vertical: "center" },
+                    border: borderStyle
+                };
+            } else if (R > 2) {
+                // Style Isi Data Tabel (Rata Kiri untuk Nama Agenda & Target)
+                const isLeftAlign = (C === 1 || C === 2); 
+                ws[cellAddress].s = {
+                    alignment: { horizontal: isLeftAlign ? "left" : "center", vertical: "center", wrapText: true },
+                    border: borderStyle
+                };
+            }
+        }
+    }
+
+    // 7. Proses & Download
     const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "Rekap Prioritas");
-    XLSX.writeFile(wb, "Rekap_Target_Prioritas.xlsx");
+    XLSX.utils.book_append_sheet(wb, ws, "Rekap");
+    
+    // Nama file otomatis rapi menyesuaikan isi
+    const fileName = `${judulExcel.replace(/\s+/g, '_')}.xlsx`;
+    XLSX.writeFile(wb, fileName);
 }
 
 // ================================
@@ -762,14 +850,17 @@ function renderTimeline() {
     const content = document.getElementById("content");
     content.style.display = "block";
 
-    const sortedAgendas = [...agendas].sort((a, b) => {
+    // REVISI: Tambahkan filter agar agenda yang diarsipkan tidak muncul di Timeline
+    const activeAgendas = agendas.filter(a => !a.isArchived);
+
+    const sortedAgendas = activeAgendas.sort((a, b) => {
         const dateA = a.date ? new Date(a.date).getTime() : Infinity;
         const dateB = b.date ? new Date(b.date).getTime() : Infinity;
         return dateA - dateB;
     });
 
     if (sortedAgendas.length === 0) {
-        content.innerHTML = `<div class="empty-state"><h2>Belum ada agenda</h2><p>Tambahkan agenda terlebih dahulu.</p></div>`;
+        content.innerHTML = `<div class="empty-state"><h2>Belum ada agenda aktif</h2><p>Tambahkan agenda terlebih dahulu.</p></div>`;
         return;
     }
 
@@ -1056,4 +1147,77 @@ function exportCalendarToExcel() {
     
     const fileName = `Jadwal_${agenda.name.replace(/\s+/g, '_')}.xlsx`;
     XLSX.writeFile(wb, fileName);
+}
+
+// ================================
+// FITUR ARSIP AGENDA
+// ================================
+function toggleArchive(event, agendaId) {
+    event.stopPropagation();
+    const agenda = agendas.find(a => a.id === agendaId);
+    if (agenda) {
+        // Ubah status arsip (jika true jadi false, jika false jadi true)
+        agenda.isArchived = !agenda.isArchived; 
+        saveData();
+        
+        // Pindah halaman secara otomatis
+        if (agenda.isArchived) {
+            renderAgendas(); 
+        } else {
+            renderArchive();
+        }
+    }
+}
+
+function renderArchive() {
+    document.getElementById("pageTitle").innerText = "Arsip Agenda";
+    document.getElementById("pageSubtitle").innerText = "Agenda yang sudah selesai dan disimpan.";
+    
+    const content = document.getElementById("content");
+    content.style.display = "grid"; 
+    content.innerHTML = "";
+
+    // Ambil HANYA agenda yang diarsipkan
+    const archivedAgendas = agendas.filter(a => a.isArchived);
+
+    if (archivedAgendas.length === 0) {
+        content.innerHTML = `<div class="empty-state"><h2>Arsip Kosong</h2><p>Belum ada agenda yang diarsipkan.</p></div>`;
+        return;
+    }
+
+    archivedAgendas.forEach(agenda => {
+        const total = agenda.targets.length;
+        const completed = agenda.targets.filter(t => t.completed).length;
+        const priority = agenda.targets.filter(t => t.priority).length;
+        const progress = total === 0 ? 0 : Math.round((completed / total) * 100);
+
+        const card = document.createElement("div");
+        card.className = "agenda-card";
+        card.style.opacity = "0.8"; // Tampilan dibuat sedikit transparan agar terasa seperti arsip lama
+        card.innerHTML = `
+            <div class="agenda-card-header">
+                <div>
+                    <h2>${agenda.name}</h2>
+                    <p style="color: #64748b; font-size:0.85rem; font-weight:600; margin-bottom: 0.3rem;">Hari H: ${formatDate(agenda.date)}</p>
+                    <p>${agenda.description || "Tidak ada deskripsi"}</p>
+                </div>
+                <div style="display: flex; gap: 0.5rem; align-items:flex-start;">
+                    <!-- Tombol Restore (Kembalikan) -->
+                    <button onclick="toggleArchive(event, '${agenda.id}')" style="background:#EBF5FF; color:#3B82F6; border:none; width:36px; height:36px; border-radius:10px; cursor:pointer;" title="Kembalikan ke Semua Agenda">🔙</button>
+                    <!-- Tombol Hapus Permanen -->
+                    <button class="delete-btn" onclick="deleteAgenda(event, '${agenda.id}')" title="Hapus Permanen">🗑</button>
+                </div>
+            </div>
+            <div class="agenda-info">
+                <span>${total} Target</span>
+                <span>⭐ ${priority} Prioritas</span>
+            </div>
+            <div class="progress"><div class="progress-bar" style="width:${progress}%; background:#94a3b8;"></div></div>
+            <div class="agenda-footer">
+                <span style="color:#64748b;">${progress}% selesai</span>
+                <button onclick="openAgenda('${agenda.id}')" style="color:#64748b;">Lihat Detail →</button>
+            </div>
+        `;
+        content.appendChild(card);
+    });
 }
