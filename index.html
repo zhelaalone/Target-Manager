@@ -34,6 +34,9 @@
             <button class="nav-item" data-page="archive">
                 📦 Arsip Agenda
             </button>
+            <button class="nav-item" data-page="countdown">
+                ⏳ Countdown
+            </button>
         </nav>
     </aside>
 
@@ -114,6 +117,24 @@
                 </label>
 
                 <button class="btn-primary" type="submit">Simpan Target</button>
+            </form>
+        </div>
+    </div>
+
+<!-- MODAL TAMBAH COUNTDOWN -->
+    <div class="modal hidden" id="countdownModal">
+        <div class="modal-content">
+            <button class="close" onclick="closeCountdownModal()">×</button>
+            <h2 id="countdownModalTitle">Buat Countdown Baru</h2>
+            
+            <form id="countdownForm">
+                <label>Judul / Tujuan</label>
+                <input type="text" id="countdownName" placeholder="Contoh: 300 Hari Makan Sehat" required>
+
+                <label>Tanggal Target (Hari H)</label>
+                <input type="date" id="countdownDate" required>
+
+                <button class="btn-primary" type="submit" style="margin-top: 1rem;">Simpan Countdown</button>
             </form>
         </div>
     </div>
