@@ -1,14 +1,19 @@
+// ================================
+// DATA & STATE MANAGEMENT
+// ================================
 let agendas = JSON.parse(localStorage.getItem("targetManager")) || [];
 let currentAgendaId = null;
 let currentCalMonth = new Date().getMonth();
 let currentCalYear = new Date().getFullYear();
 let selectedFilterDate = null;
+let countdowns = JSON.parse(localStorage.getItem("tm_countdowns")) || [];
 
 // ================================
 // SAVE DATA & FORMAT DATE
 // ================================
 function saveData() {
     localStorage.setItem("targetManager", JSON.stringify(agendas));
+    localStorage.setItem("tm_countdowns", JSON.stringify(countdowns));
 }
 
 function formatDate(date) {
@@ -36,7 +41,7 @@ function getCountdownText(dateString) {
 }
 
 // ================================
-// HALAMAN DASHBOARD (DENGAN PENGINGAT DEADLINE, FILTER ARSIP, & JAM)
+// HALAMAN DASHBOARD
 // ================================
 function renderDashboard() {
     document.getElementById("pageTitle").innerText = "Dashboard";
@@ -46,16 +51,14 @@ function renderDashboard() {
     content.style.display = "block";
 
     const today = new Date();
-    today.setHours(0, 0, 0, 0); // Set ke awal hari untuk komparasi akurat
+    today.setHours(0, 0, 0, 0); 
 
     let overdueTargets = [];
     let totalTargets = 0;
     let completedCount = 0;
 
-    // REVISI 1: Terapkan Filter Arsip (Hanya proses agenda yang belum diarsipkan)
     const activeAgendas = agendas.filter(a => !a.isArchived);
 
-    // Filter target yang terlewat deadline & belum selesai
     activeAgendas.forEach(agenda => {
         agenda.targets.forEach(target => {
             totalTargets++;
@@ -76,10 +79,8 @@ function renderDashboard() {
         });
     });
 
-    // Urutkan overdue dari tanggal yang paling lama terlewat
     overdueTargets.sort((a, b) => new Date(a.deadline) - new Date(b.deadline));
 
-    // HTML Banner Pengingat Overdue
     let overdueHTML = "";
     if (overdueTargets.length > 0) {
         overdueHTML = `
@@ -91,7 +92,6 @@ function renderDashboard() {
                 </div>
                 <div style="display: flex; flex-direction: column; gap: 0.75rem;">
                     ${overdueTargets.map(target => {
-                        // REVISI 2: Menampilkan indikator Jam jika ada
                         const timeDisplay = target.time ? ` ⏰ ${target.time}` : "";
                         return `
                         <div style="display: flex; align-items: center; justify-content: space-between; background: #ffffff; padding: 0.75rem 1rem; border-radius: 8px; border: 1px solid #fecdd3;">
@@ -113,15 +113,12 @@ function renderDashboard() {
         `;
     }
 
-    // Persentase Progress Keseluruhan
     const progressPercent = totalTargets > 0 ? Math.round((completedCount / totalTargets) * 100) : 0;
 
-    // Tampilan Grid Kartu Ringkasan
     const statsHTML = `
         <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1.5rem; margin-bottom: 2rem;">
             <div style="background: #fff; padding: 1.5rem; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.03);">
                 <span style="color: #64748b; font-size: 0.85rem;">Total Agenda Aktif</span>
-                <!-- REVISI 3: Menghitung activeAgendas, bukan semua agendas -->
                 <h2 style="margin: 0.5rem 0 0; color: #1e293b; font-size: 1.8rem;">${activeAgendas.length}</h2>
             </div>
             <div style="background: #fff; padding: 1.5rem; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.03);">
@@ -142,18 +139,16 @@ function renderDashboard() {
     content.innerHTML = overdueHTML + statsHTML;
 }
 
-
 // ================================
-// RENDER DAFTAR AGENDA (DENGAN COUNTDOWN & ARSIP)
+// RENDER DAFTAR AGENDA 
 // ================================
 function renderAgendas() {
     document.getElementById("pageTitle").innerText = "Semua Agenda";
     document.getElementById("pageSubtitle").innerText = "Kelola agenda dan target pekerjaan Anda.";
     const content = document.getElementById("content");
-    content.style.display = "grid"; // Kembalikan ke format Grid
+    content.style.display = "grid"; 
     content.innerHTML = "";
 
-    // FILTER: Hanya tampilkan agenda yang BELUM diarsipkan
     const activeAgendas = agendas.filter(a => !a.isArchived);
 
     if (activeAgendas.length === 0) {
@@ -167,17 +162,14 @@ function renderAgendas() {
         const priority = agenda.targets.filter(t => t.priority).length;
         const progress = total === 0 ? 0 : Math.round((completed / total) * 100);
 
-        // 1. Hitung Countdown Agenda
         const agendaCountdown = getCountdownText(agenda.date);
         const isAgendaOverdue = agendaCountdown.includes("Terlewat");
 
-        // 2. Ambil maksimal 3 target yang belum selesai, urutkan dari deadline terdekat
         const pendingTargets = agenda.targets
             .filter(t => !t.completed && t.deadline)
             .sort((a, b) => new Date(a.deadline) - new Date(b.deadline))
             .slice(0, 3); 
 
-        // 3. Render HTML untuk List Target Terdekat di dalam Card
         let miniTargetHTML = "";
         if (pendingTargets.length > 0) {
             miniTargetHTML = `
@@ -186,7 +178,6 @@ function renderAgendas() {
                     ${pendingTargets.map(t => {
                         const tCountdown = getCountdownText(t.deadline);
                         const isTOverdue = tCountdown.includes("Terlewat");
-                        // Tambahkan keterangan jam jika diisi
                         const timeDisplay = t.time ? ` (${t.time})` : "";
                         
                         return `
@@ -203,7 +194,6 @@ function renderAgendas() {
             miniTargetHTML = `<div class="mini-target-list" style="text-align:center; color: #9094A6; font-style: italic;">Belum ada target untuk dikerjakan.</div>`;
         }
 
-        // 4. Susun Card Utama
         const card = document.createElement("div");
         card.className = "agenda-card";
         card.innerHTML = `
@@ -212,7 +202,6 @@ function renderAgendas() {
                     <div style="display:flex; justify-content:space-between; align-items:flex-start;">
                         <h2 style="margin-right:10px;">${agenda.name}</h2>
                         
-                        <!-- Grup Tombol Aksi (Edit, Arsip, Hapus) -->
                         <div style="display: flex; gap: 0.5rem; align-items:flex-start; flex-shrink:0;">
                             <button class="edit-btn" onclick="openEditAgenda(event, '${agenda.id}')" style="background:#FFF0E5; color:#FF6B35; border:none; width:32px; height:32px; border-radius:8px; cursor:pointer; display:flex; align-items:center; justify-content:center;" title="Edit">✏️</button>
                             <button onclick="toggleArchive(event, '${agenda.id}')" style="background:#EBF5FF; color:#3B82F6; border:none; width:32px; height:32px; border-radius:8px; cursor:pointer; display:flex; align-items:center; justify-content:center;" title="Arsipkan">📦</button>
@@ -231,7 +220,6 @@ function renderAgendas() {
                 </div>
             </div>
             
-            <!-- Memasukkan list target terdekat di sini -->
             ${miniTargetHTML}
 
             <div class="agenda-info" style="margin-top:auto;">
@@ -248,16 +236,14 @@ function renderAgendas() {
     });
 }
 
-
 // ================================
-// OPEN DETAIL AGENDA (DENGAN KALENDER FILTER & EXPORT)
+// OPEN DETAIL AGENDA (CALENDAR WIDGET & CSS)
 // ================================
 function openAgenda(id) {
     currentAgendaId = id;
     const agenda = agendas.find(item => item.id === id);
     if (!agenda) return;
 
-    // Reset filter & kalender setiap membuka agenda baru
     currentCalMonth = new Date().getMonth();
     currentCalYear = new Date().getFullYear();
     selectedFilterDate = null;
@@ -268,7 +254,53 @@ function openAgenda(id) {
     const content = document.getElementById("content");
     content.style.display = "block";
     
-    content.innerHTML = `
+    // Injecting CSS Directly for the Calendar UI to look like a neat boxed calendar
+    const calendarCSS = `
+    <style>
+        .agenda-detail-layout { display: flex; flex-wrap: wrap; gap: 2rem; align-items: flex-start; }
+        .calendar-widget { 
+            flex: 1; min-width: 320px; max-width: 420px;
+            background: #ffffff; border-radius: 12px; padding: 1.5rem; 
+            box-shadow: 0 4px 20px rgba(0,0,0,0.05); border: 2px solid #F1F5F9; 
+        }
+        .cal-header { 
+            display: flex; justify-content: space-between; align-items: center; 
+            background: #0F766E; color: #ffffff; padding: 1rem 1.5rem; 
+            border-radius: 8px; margin-bottom: 1.2rem; font-weight: 700; font-size: 1.1rem;
+            text-transform: uppercase; letter-spacing: 1px;
+        }
+        .cal-header button { 
+            background: rgba(255,255,255,0.2); border: none; color: white; 
+            border-radius: 6px; width: 32px; height: 32px; cursor: pointer; 
+            display: flex; align-items: center; justify-content: center; font-weight: bold; transition: 0.2s;
+        }
+        .cal-header button:hover { background: rgba(255,255,255,0.4); }
+        .cal-days { 
+            display: grid; grid-template-columns: repeat(7, 1fr); text-align: center; 
+            font-weight: 700; color: #475569; font-size: 0.85rem; margin-bottom: 0.5rem; 
+        }
+        .cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
+        .cal-date { 
+            aspect-ratio: 1; display: flex; flex-direction: column; justify-content: center; align-items: center; 
+            border-radius: 6px; font-size: 1rem; cursor: pointer; font-weight: 600;
+            background: #F8FAFC; border: 1px solid #E2E8F0; color: #1E293B; transition: all 0.2s;
+        }
+        .cal-date:hover:not(.empty) { background: #FFF0E5; border-color: #FF6B35; color: #FF6B35; }
+        .cal-date.empty { background: transparent; border-color: transparent; cursor: default; }
+        .cal-date.has-target { 
+            background: #FF6B35; color: white; border-color: #FF6B35; 
+            box-shadow: 0 4px 10px rgba(255,107,53,0.3); 
+        }
+        .cal-date.active { 
+            border: 2px solid #0F766E; background: #CCFBF1; color: #0F766E; transform: scale(1.05); 
+        }
+        .cal-indicator {
+            width: 6px; height: 6px; background: white; border-radius: 50%; margin-top: 4px;
+        }
+    </style>
+    `;
+
+    content.innerHTML = calendarCSS + `
         <div class="back-button">
             <button onclick="renderAgendas()">← Kembali ke Daftar Agenda</button>
         </div>
@@ -281,7 +313,6 @@ function openAgenda(id) {
         </div>
         
         <div class="agenda-detail-layout">
-            <!-- Widget Kalender di Kiri -->
             <div class="calendar-widget">
                 <div class="cal-header">
                     <button onclick="changeCalMonth(-1)">❮</button>
@@ -293,19 +324,17 @@ function openAgenda(id) {
                 </div>
                 <div class="cal-grid" id="calGrid"></div>
                 
-                <!-- Grup Tombol Bawah Kalender -->
                 <div style="margin-top: 1.5rem; display: flex; flex-direction: column; gap: 0.5rem;">
                     <button onclick="clearDateFilter()" style="background: transparent; border: 1px dashed #E5E7EB; padding: 0.5rem 1rem; border-radius: 8px; font-size: 0.8rem; cursor: pointer; color: #9094A6; width: 100%; transition: 0.2s;">
                         Tampilkan Semua Target
                     </button>
                     <button onclick="exportCalendarToExcel()" style="background: #217346; color: white; border: none; padding: 0.6rem 1rem; border-radius: 8px; font-size: 0.85rem; font-weight: 600; cursor: pointer; width: 100%; transition: 0.2s; box-shadow: 0 4px 10px rgba(33, 115, 70, 0.2);">
-                        📊 Cetak Jadwal (Excel)
+                        📅 Cetak Kalender (Excel)
                     </button>
                 </div>
             </div>
             
-            <!-- Daftar Target di Kanan -->
-            <div>
+            <div style="flex: 2; min-width: 320px;">
                 <h3 id="targetListTitle" style="margin-bottom: 1.2rem; color: #111; font-size: 1.2rem;">Semua Target</h3>
                 <div id="targetList"></div>
             </div>
@@ -359,28 +388,138 @@ function renderAgendaCalendar(agenda) {
     const firstDay = new Date(currentCalYear, currentCalMonth, 1).getDay();
     const daysInMonth = new Date(currentCalYear, currentCalMonth + 1, 0).getDate();
 
-    // Mapping tanggal mana saja yang memiliki target
     const targetDates = {};
     agenda.targets.forEach(t => {
         if (t.deadline) targetDates[t.deadline] = true;
     });
 
-    // Render kotak kosong sebelum tanggal 1
     for (let i = 0; i < firstDay; i++) {
         calGrid.innerHTML += `<div class="cal-date empty"></div>`;
     }
 
-    // Render tanggal
     for (let i = 1; i <= daysInMonth; i++) {
-        // Format YYYY-MM-DD agar sama dengan nilai input date HTML
         const dateStr = `${currentCalYear}-${String(currentCalMonth+1).padStart(2, '0')}-${String(i).padStart(2, '0')}`;
         
         let classes = "cal-date";
-        if (targetDates[dateStr]) classes += " has-target";
+        let innerHTML = `${i}`;
+
+        if (targetDates[dateStr]) {
+            classes += " has-target";
+            // Menambah titik kecil di dalam kotak sebagai penanda jika ada target
+            innerHTML += `<div class="cal-indicator"></div>`;
+        }
         if (selectedFilterDate === dateStr) classes += " active";
 
-        calGrid.innerHTML += `<div class="${classes}" onclick="filterByDate('${dateStr}')">${i}</div>`;
+        calGrid.innerHTML += `<div class="${classes}" onclick="filterByDate('${dateStr}')">${innerHTML}</div>`;
     }
+}
+
+// ================================
+// EXPORT EXCEL JADWAL (WARNA VIBRANT SEPERTI GAMBAR KALENDER)
+// ================================
+function exportCalendarToExcel() {
+    const agenda = agendas.find(a => a.id === currentAgendaId);
+    if (!agenda) return;
+
+    const months = ["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember"];
+    const monthName = months[currentCalMonth];
+    const year = currentCalYear;
+
+    let wsData = [
+        [`AGENDA: ${agenda.name.toUpperCase()}`], 
+        [`${monthName.toUpperCase()} ${year}`], // Baris Nama Bulan
+        ["Minggu", "Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu"] 
+    ];
+
+    const firstDay = new Date(year, currentCalMonth, 1).getDay(); 
+    const daysInMonth = new Date(year, currentCalMonth + 1, 0).getDate(); 
+
+    let currentWeek = [];
+
+    for (let i = 0; i < firstDay; i++) {
+        currentWeek.push("");
+    }
+
+    for (let day = 1; day <= daysInMonth; day++) {
+        const dateStr = `${year}-${String(currentCalMonth+1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+        const targetsToday = agenda.targets.filter(t => t.deadline === dateStr);
+        
+        let cellContent = `${day}`; 
+        if (targetsToday.length > 0) {
+            targetsToday.forEach(t => {
+                const timeStr = t.time ? ` (${t.time})` : "";
+                cellContent += `\n• ${t.name}${timeStr}`; 
+            });
+        }
+
+        currentWeek.push(cellContent);
+
+        if (currentWeek.length === 7) {
+            wsData.push(currentWeek);
+            currentWeek = [];
+        }
+    }
+
+    if (currentWeek.length > 0) {
+        while (currentWeek.length < 7) {
+            currentWeek.push("");
+        }
+        wsData.push(currentWeek);
+    }
+
+    const ws = XLSX.utils.aoa_to_sheet(wsData);
+
+    ws['!merges'] = [
+        { s: { r: 0, c: 0 }, e: { r: 0, c: 6 } }, 
+        { s: { r: 1, c: 0 }, e: { r: 1, c: 6 } }
+    ];
+
+    ws['!cols'] = Array(7).fill({ wch: 18 });
+
+    ws['!rows'] = [
+        { hpt: 30 }, // Baris Judul Agenda
+        { hpt: 35 }, // Baris Bulan & Tahun (Tinggi)
+        { hpt: 25 }  // Baris Nama Hari
+    ];
+    for(let i = 3; i < wsData.length; i++) {
+        ws['!rows'].push({ hpt: 90 }); // Kotak tanggal kalender
+    }
+
+    const borderStyle = {
+        top: { style: "medium", color: { rgb: "000000" } },
+        bottom: { style: "medium", color: { rgb: "000000" } },
+        left: { style: "medium", color: { rgb: "000000" } },
+        right: { style: "medium", color: { rgb: "000000" } }
+    };
+
+    for (let R = 0; R < wsData.length; ++R) {
+        for (let C = 0; C < 7; ++C) {
+            let cellAddress = XLSX.utils.encode_cell({r: R, c: C});
+            if (!ws[cellAddress]) ws[cellAddress] = { t: 's', v: '' }; 
+
+            if (R === 0) {
+                // Judul Agenda Utama (Putih/Polos)
+                ws[cellAddress].s = { font: { bold: true, sz: 14, color: { rgb: "2D3142" } }, alignment: { horizontal: "center", vertical: "center" } };
+            } else if (R === 1) {
+                // Blok Warna Solid untuk Nama Bulan (Seperti di gambar image_bacfd3.png)
+                ws[cellAddress].s = { font: { bold: true, sz: 14, color: { rgb: "FFFFFF" } }, fill: { fgColor: { rgb: "0F766E" } }, alignment: { horizontal: "center", vertical: "center" }, border: borderStyle };
+            } else if (R === 2) {
+                // Header Hari (Warna Gelap)
+                ws[cellAddress].s = { font: { bold: true, color: { rgb: "FFFFFF" } }, fill: { fgColor: { rgb: "2D3142" } }, alignment: { horizontal: "center", vertical: "center" }, border: borderStyle };
+            } else if (R > 2) {
+                // Kotak Tanggal (Border Tegas, Angka di kiri atas)
+                ws[cellAddress].s = { 
+                    alignment: { horizontal: "left", vertical: "top", wrapText: true }, 
+                    border: borderStyle,
+                    font: { sz: 10, color: { rgb: "2D3142" } } 
+                };
+            }
+        }
+    }
+
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Kalender Agenda");
+    XLSX.writeFile(wb, `Kalender_${agenda.name.replace(/\s+/g, '_')}_${monthName}.xlsx`);
 }
 
 // ================================
@@ -392,14 +531,12 @@ function renderTargets(agenda) {
     if (!list) return;
     list.innerHTML = "";
 
-    // Logika Filter
     let filteredTargets = agenda.targets;
     if (selectedFilterDate) {
         filteredTargets = agenda.targets.filter(t => t.deadline === selectedFilterDate);
         title.innerHTML = `Target untuk: <span style="color:#FF6B35;">${formatDate(selectedFilterDate)}</span>`;
     } else {
         title.innerText = "Semua Target";
-        // Urutkan default dari deadline terdekat
         filteredTargets.sort((a, b) => new Date(a.deadline) - new Date(b.deadline));
     }
 
@@ -431,9 +568,8 @@ function renderTargets(agenda) {
     });
 }
 
-
 // ================================
-// HALAMAN REKAP TARGET (PRIORITAS, SELESAI, & SEMUA TARGET)
+// HALAMAN REKAP TARGET
 // ================================
 function renderSpecialPage(type) {
     let title = "";
@@ -456,7 +592,6 @@ function renderSpecialPage(type) {
     const content = document.getElementById("content");
     content.style.display = "block";
     
-    // Tombol Export Excel khusus tab Rekap
     let exportBtn = `
         <div style="display: flex; justify-content: flex-end; margin-bottom: 1.5rem;">
             <button class="btn-primary" onclick="exportFilteredTargetsToExcel('${type}')" style="background-color: #217346; box-shadow: 0 6px 20px rgba(33, 115, 70, 0.3);">
@@ -470,7 +605,6 @@ function renderSpecialPage(type) {
     
     let filteredTargets = [];
 
-    // Mengumpulkan target yang BELUM DIARSIP berdasarkan tab yang dibuka
     agendas.filter(a => !a.isArchived).forEach(agenda => {
         agenda.targets.forEach(target => {
             if (type === 'priority' && target.priority && !target.completed) {
@@ -483,7 +617,6 @@ function renderSpecialPage(type) {
         });
     });
 
-    // PENGURUTAN: Tanggal terdekat ke terjauh
     filteredTargets.sort((a, b) => {
         const dateA = a.deadline ? new Date(a.deadline).getTime() : Infinity;
         const dateB = b.deadline ? new Date(b.deadline).getTime() : Infinity;
@@ -496,7 +629,6 @@ function renderSpecialPage(type) {
     }
 
     filteredTargets.forEach(target => {
-        // Menyiapkan teks jam jika waktu diisi
         const timeDisplay = target.time ? ` — ⏰ ${target.time}` : "";
 
         container.innerHTML += `
@@ -516,12 +648,90 @@ function renderSpecialPage(type) {
     });
 }
 
+// ================================
+// EXPORT EXCEL SEMUA TARGET
+// ================================
+function exportFilteredTargetsToExcel(type) {
+    let filteredTargets = [];
+    let judulExcel = "";
+
+    agendas.filter(a => !a.isArchived).forEach(agenda => {
+        agenda.targets.forEach(target => {
+            if (type === 'priority' && target.priority && !target.completed) {
+                filteredTargets.push({...target, agendaName: agenda.name});
+            } else if (type === 'completed' && target.completed) {
+                filteredTargets.push({...target, agendaName: agenda.name});
+            } else if (type === 'all-targets') {
+                filteredTargets.push({...target, agendaName: agenda.name});
+            }
+        });
+    });
+
+    if (filteredTargets.length === 0) {
+        alert("Tidak ada data target untuk diekspor.");
+        return;
+    }
+
+    filteredTargets.sort((a, b) => {
+        const dateA = a.deadline ? new Date(a.deadline).getTime() : Infinity;
+        const dateB = b.deadline ? new Date(b.deadline).getTime() : Infinity;
+        return dateA - dateB;
+    });
+
+    if (type === 'priority') judulExcel = "REKAP TARGET PRIORITAS";
+    else if (type === 'completed') judulExcel = "REKAP TARGET SELESAI";
+    else judulExcel = "REKAP SEMUA TARGET";
+
+    let wsData = [
+        [judulExcel], [], 
+        ["No", "Nama Agenda", "Target Pekerjaan", "Deadline", "Jam", "Prioritas", "Status"]
+    ];
+
+    filteredTargets.forEach((t, index) => {
+        wsData.push([
+            index + 1, t.agendaName, t.name, formatDate(t.deadline),
+            t.time ? t.time : "-", t.priority ? "⭐ Ya" : "-", t.completed ? "Selesai" : "Proses"
+        ]);
+    });
+
+    const ws = XLSX.utils.aoa_to_sheet(wsData);
+    ws['!merges'] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 6 } }];
+    ws['!cols'] = [{wch: 5}, {wch: 25}, {wch: 40}, {wch: 20}, {wch: 10}, {wch: 12}, {wch: 15}];
+    ws['!rows'] = [{hpt: 35}, {hpt: 15}]; 
+    for(let i = 2; i < wsData.length; i++) ws['!rows'].push({hpt: 25});
+
+    const borderStyle = {
+        top: { style: "thin", color: { auto: 1 } },
+        bottom: { style: "thin", color: { auto: 1 } },
+        left: { style: "thin", color: { auto: 1 } },
+        right: { style: "thin", color: { auto: 1 } }
+    };
+
+    for (let R = 0; R < wsData.length; ++R) {
+        for (let C = 0; C < 7; ++C) {
+            let cellAddress = XLSX.utils.encode_cell({r: R, c: C});
+            if (!ws[cellAddress]) ws[cellAddress] = { t: 's', v: '' };
+
+            if (R === 0) {
+                ws[cellAddress].s = { font: { bold: true, sz: 14, color: { rgb: "FF6B35" } }, alignment: { horizontal: "center", vertical: "center" } };
+            } else if (R === 2) {
+                ws[cellAddress].s = { font: { bold: true, color: { rgb: "FFFFFF" } }, fill: { fgColor: { rgb: "2D3142" } }, alignment: { horizontal: "center", vertical: "center" }, border: borderStyle };
+            } else if (R > 2) {
+                const isLeftAlign = (C === 1 || C === 2); 
+                ws[cellAddress].s = { alignment: { horizontal: isLeftAlign ? "left" : "center", vertical: "center", wrapText: true }, border: borderStyle };
+            }
+        }
+    }
+
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Rekap");
+    XLSX.writeFile(wb, `${judulExcel.replace(/\s+/g, '_')}.xlsx`);
+}
+
 
 // ================================
-// FORM SUMBITS (ADD & EDIT LOGIC)
+// FORM SUMBITS & MODAL LOGIC
 // ================================
-
-// FORM AGENDA
 document.getElementById("agendaForm").addEventListener("submit", function(e) {
     e.preventDefault();
     const id = document.getElementById("editAgendaId").value;
@@ -530,26 +740,22 @@ document.getElementById("agendaForm").addEventListener("submit", function(e) {
     const description = document.getElementById("agendaDescription").value;
 
     if(id) {
-        // Mode Edit
         const agenda = agendas.find(a => a.id === id);
         agenda.name = name;
         agenda.date = date;
         agenda.description = description;
     } else {
-        // Mode Tambah Baru
-        agendas.push({ id: Date.now().toString(), name, date, description, targets: [] });
+        agendas.push({ id: Date.now().toString(), name, date, description, isArchived: false, targets: [] });
     }
 
     saveData();
     closeAgendaModal();
-    renderAgendas(); // Langsung ke view agenda
-    // Update nav aktif ke agenda jika sebelumnya di dashboard
+    renderAgendas(); 
+    
     document.querySelectorAll(".nav-item").forEach(i => i.classList.remove("active"));
     document.querySelector('[data-page="agenda"]').classList.add("active");
 });
 
-
-// FORM TARGET (Menerima input jam)
 document.getElementById("targetForm").addEventListener("submit", function(e) {
     e.preventDefault();
     const agendaId = document.getElementById("targetAgendaId").value;
@@ -560,18 +766,16 @@ document.getElementById("targetForm").addEventListener("submit", function(e) {
 
     const name = document.getElementById("targetName").value;
     const deadline = document.getElementById("targetDeadline").value;
-    const time = document.getElementById("targetTime").value; // Ambil nilai jam
+    const time = document.getElementById("targetTime").value; 
     const priority = document.getElementById("targetPriority").checked;
 
     if(targetId) {
-        // Mode Edit
         const target = agenda.targets.find(t => t.id === targetId);
         target.name = name;
         target.deadline = deadline;
-        target.time = time; // Update jam
+        target.time = time; 
         target.priority = priority;
     } else {
-        // Mode Tambah Baru
         agenda.targets.push({ id: Date.now().toString(), name, deadline, time, priority, completed: false });
     }
 
@@ -580,10 +784,6 @@ document.getElementById("targetForm").addEventListener("submit", function(e) {
     openAgenda(agendaId);
 });
 
-
-// ================================
-// EDIT TRIGGERS (MEMBUKA MODAL)
-// ================================
 function openEditAgenda(event, id) {
     event.stopPropagation();
     const a = agendas.find(a => a.id === id);
@@ -606,17 +806,13 @@ function openEditTarget(agendaId, targetId) {
     
     document.getElementById("targetName").value = t.name;
     document.getElementById("targetDeadline").value = t.deadline || "";
-    document.getElementById("targetTime").value = t.time || ""; // Isi jam jika ada
+    document.getElementById("targetTime").value = t.time || ""; 
     document.getElementById("targetPriority").checked = t.priority;
     
     document.getElementById("targetModalTitle").innerText = "Edit Target";
     document.getElementById("targetModal").classList.remove("hidden");
 }
 
-
-// ================================
-// MODAL CONTROLLERS (RESET SAAT CLOSE)
-// ================================
 function openAgendaModal() {
     document.getElementById("agendaForm").reset();
     document.getElementById("editAgendaId").value = "";
@@ -631,7 +827,7 @@ function openTargetModal(agendaId) {
     document.getElementById("targetForm").reset();
     document.getElementById("editTargetId").value = "";
     document.getElementById("targetAgendaId").value = agendaId || currentAgendaId;
-    document.getElementById("targetTime").value = ""; // Kosongkan jam
+    document.getElementById("targetTime").value = ""; 
     document.getElementById("targetModalTitle").innerText = "Tambah Target";
     document.getElementById("targetModal").classList.remove("hidden");
 }
@@ -640,10 +836,6 @@ function closeTargetModal() {
     document.getElementById("targetModal").classList.add("hidden");
 }
 
-
-// ================================
-// TOGGLE TARGET (DENGAN DUKUNGAN DASHBOARD)
-// ================================
 function toggleTarget(agendaId, targetId, currentView = 'agenda') {
     const agenda = agendas.find(a => a.id === agendaId);
     const target = agenda.targets.find(t => t.id === targetId);
@@ -680,168 +872,14 @@ function deleteAgenda(event, agendaId) {
     if (!confirm("Hapus agenda beserta seluruh target di dalamnya?")) return;
     agendas = agendas.filter(a => a.id !== agendaId);
     saveData();
-    renderAgendas();
-}
-
-
-// ================================
-// NAVIGATION HANDLER
-// ================================
-document.querySelectorAll(".nav-item").forEach(button => {
-    button.addEventListener("click", function() {
-        document.querySelectorAll(".nav-item").forEach(item => item.classList.remove("active"));
-        this.classList.add("active");
-        
-        const page = this.dataset.page;
-        if (page === "dashboard") renderDashboard();
-        else if (page === "agenda") renderAgendas();
-        else if (page === "timeline") renderTimeline(); // <-- TAMBAHKAN BARIS INI
-        else if (page === "all-targets") renderSpecialPage('all-targets');
-        else if (page === "priority") renderSpecialPage('priority');
-        else if (page === "completed") renderSpecialPage('completed');
-        else if (page === "archive") renderArchive(); // <--- TAMBAHKAN BARIS INI 
-    });
-});
-
-
-// ================================
-// INITIAL LOAD
-// ================================
-renderDashboard();
-
-// ================================
-// EXPORT EXCEL SEMUA TARGET / PRIORITAS / SELESAI (SIAP CETAK)
-// ================================
-function exportFilteredTargetsToExcel(type) {
-    let filteredTargets = [];
-    let judulExcel = "";
-
-    // 1. Kumpulkan data berdasarkan tipe tab yang sedang dibuka
-    agendas.forEach(agenda => {
-        agenda.targets.forEach(target => {
-            if (type === 'priority' && target.priority && !target.completed) {
-                filteredTargets.push({...target, agendaName: agenda.name});
-            } else if (type === 'completed' && target.completed) {
-                filteredTargets.push({...target, agendaName: agenda.name});
-            } else if (type === 'all-targets') {
-                filteredTargets.push({...target, agendaName: agenda.name});
-            }
-        });
-    });
-
-    if (filteredTargets.length === 0) {
-        alert("Tidak ada data target untuk diekspor.");
-        return;
-    }
-
-    // Urutkan berdasarkan tanggal terdekat
-    filteredTargets.sort((a, b) => {
-        const dateA = a.deadline ? new Date(a.deadline).getTime() : Infinity;
-        const dateB = b.deadline ? new Date(b.deadline).getTime() : Infinity;
-        return dateA - dateB;
-    });
-
-    // Menentukan judul tabel di dalam Excel
-    if (type === 'priority') judulExcel = "REKAP TARGET PRIORITAS";
-    else if (type === 'completed') judulExcel = "REKAP TARGET SELESAI";
-    else judulExcel = "REKAP SEMUA TARGET";
-
-    // 2. Susun format Array of Arrays
-    let wsData = [
-        [judulExcel], // Baris 1: Judul
-        [], // Baris 2: Kosong untuk spasi
-        ["No", "Nama Agenda", "Target Pekerjaan", "Deadline", "Jam", "Prioritas", "Status"] // Baris 3: Header
-    ];
-
-    // Isi Data baris demi baris
-    filteredTargets.forEach((t, index) => {
-        wsData.push([
-            index + 1,
-            t.agendaName,
-            t.name,
-            formatDate(t.deadline),
-            t.time ? t.time : "-",
-            t.priority ? "⭐ Ya" : "-",
-            t.completed ? "Selesai" : "Proses"
-        ]);
-    });
-
-    // Buat worksheet
-    const ws = XLSX.utils.aoa_to_sheet(wsData);
-
-    // 3. Gabungkan Cell Judul (Merge kolom A sampai G)
-    ws['!merges'] = [
-        { s: { r: 0, c: 0 }, e: { r: 0, c: 6 } } 
-    ];
-
-    // 4. Atur Lebar Kolom agar rapi (Proporsional)
-    ws['!cols'] = [
-        {wch: 5},   // A: No
-        {wch: 25},  // B: Nama Agenda
-        {wch: 40},  // C: Target Pekerjaan
-        {wch: 20},  // D: Deadline
-        {wch: 10},  // E: Jam
-        {wch: 12},  // F: Prioritas
-        {wch: 15}   // G: Status
-    ];
-
-    // 5. Atur Tinggi Baris (Agar tidak terlalu mepet)
-    ws['!rows'] = [{hpt: 35}, {hpt: 15}]; 
-    for(let i = 2; i < wsData.length; i++) {
-        ws['!rows'].push({hpt: 25});
-    }
-
-    // 6. STYLING: Tambahkan Border, Warna, dan Alignment
-    const borderStyle = {
-        top: { style: "thin", color: { auto: 1 } },
-        bottom: { style: "thin", color: { auto: 1 } },
-        left: { style: "thin", color: { auto: 1 } },
-        right: { style: "thin", color: { auto: 1 } }
-    };
-
-    for (let R = 0; R < wsData.length; ++R) {
-        for (let C = 0; C < 7; ++C) {
-            let cellAddress = XLSX.utils.encode_cell({r: R, c: C});
-            
-            // Generate cell kosong jika undifined (agar border tetap muncul sempurna)
-            if (!ws[cellAddress]) ws[cellAddress] = { t: 's', v: '' };
-
-            if (R === 0) {
-                // Style Judul
-                ws[cellAddress].s = {
-                    font: { bold: true, sz: 14, color: { rgb: "FF6B35" } },
-                    alignment: { horizontal: "center", vertical: "center" }
-                };
-            } else if (R === 2) {
-                // Style Header Tabel (Background Gelap, Teks Putih)
-                ws[cellAddress].s = {
-                    font: { bold: true, color: { rgb: "FFFFFF" } },
-                    fill: { fgColor: { rgb: "2D3142" } },
-                    alignment: { horizontal: "center", vertical: "center" },
-                    border: borderStyle
-                };
-            } else if (R > 2) {
-                // Style Isi Data Tabel (Rata Kiri untuk Nama Agenda & Target)
-                const isLeftAlign = (C === 1 || C === 2); 
-                ws[cellAddress].s = {
-                    alignment: { horizontal: isLeftAlign ? "left" : "center", vertical: "center", wrapText: true },
-                    border: borderStyle
-                };
-            }
-        }
-    }
-
-    // 7. Proses & Download
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "Rekap");
     
-    // Nama file otomatis rapi menyesuaikan isi
-    const fileName = `${judulExcel.replace(/\s+/g, '_')}.xlsx`;
-    XLSX.writeFile(wb, fileName);
+    const page = document.querySelector(".nav-item.active").dataset.page;
+    if(page === "archive") renderArchive();
+    else renderAgendas();
 }
 
 // ================================
-// HALAMAN TIMELINE AGENDA
+// TIMELINE AGENDA
 // ================================
 function renderTimeline() {
     document.getElementById("pageTitle").innerText = "Timeline Agenda";
@@ -850,7 +888,6 @@ function renderTimeline() {
     const content = document.getElementById("content");
     content.style.display = "block";
 
-    // REVISI: Tambahkan filter agar agenda yang diarsipkan tidak muncul di Timeline
     const activeAgendas = agendas.filter(a => !a.isArchived);
 
     const sortedAgendas = activeAgendas.sort((a, b) => {
@@ -878,7 +915,7 @@ function renderTimeline() {
                 margin-top: 20px;
                 width: 100%;
                 box-sizing: border-box;
-                overflow: hidden; /* Mencegah overflow visual */
+                overflow: hidden; 
             }
             .timeline-item {
                 flex: 1 1 220px; 
@@ -992,161 +1029,33 @@ function renderTimeline() {
     timelineHTML += `</div>`;
     content.innerHTML = timelineCSS + timelineHTML;
 
-    // --- Panggil fungsi perbaikan garis setelah HTML dirender ---
     setTimeout(fixTimelineLines, 10);
 }
 
-// ================================
-// TOGGLE STATUS TIMELINE AGENDA
-// ================================
 function toggleTimelineStatus(agendaId) {
     const agenda = agendas.find(a => a.id === agendaId);
     if (agenda) {
-        // Balikkan status timelineCompleted (true jadi false, false jadi true)
         agenda.timelineCompleted = !agenda.timelineCompleted;
         saveData(); 
-        renderTimeline(); // Render ulang agar animasi UI berjalan
+        renderTimeline(); 
     }
 }
 
-// ================================
-// PERBAIKAN GARIS TIMELINE (JS POTONG GARIS)
-// ================================
 function fixTimelineLines() {
     const items = document.querySelectorAll('.timeline-item');
-    
     items.forEach((item, index) => {
         const line = item.querySelector('.timeline-line');
-        if (line) line.style.display = 'block'; // Reset tampilkan semua garis dulu
+        if (line) line.style.display = 'block'; 
         
-        // Selalu sembunyikan garis pada item paling akhir di seluruh timeline
         if (index === items.length - 1) {
             if (line) line.style.display = 'none';
             return;
         }
         
-        // Cek posisi vertikal: Jika item berikutnya ada di bawah item saat ini (turun baris)
-        // Maka sembunyikan garis pada item saat ini
         if (item.offsetTop < items[index + 1].offsetTop) {
             if (line) line.style.display = 'none';
         }
     });
-}
-
-// Pastikan perhitungan ulang terjadi jika pengguna me-resize ukuran layar/browser
-window.addEventListener('resize', () => {
-    if (document.getElementById("pageTitle").innerText === "Timeline Agenda") {
-        fixTimelineLines();
-    }
-});
-
-// ================================
-// EXPORT EXCEL JADWAL (SIAP CETAK DENGAN BORDER & JUDUL)
-// ================================
-function exportCalendarToExcel() {
-    const agenda = agendas.find(a => a.id === currentAgendaId);
-    if (!agenda) return;
-
-    if (agenda.targets.length === 0) {
-        alert("Belum ada target di agenda ini untuk dicetak.");
-        return;
-    }
-
-    const sortedTargets = [...agenda.targets].sort((a, b) => new Date(a.deadline) - new Date(b.deadline));
-
-    // 1. Susun Data (Array of Arrays) agar bisa menempatkan Judul di atas
-    let wsData = [
-        [`JADWAL TARGET: ${agenda.name.toUpperCase()}`], // Baris 1: Judul
-        [], // Baris 2: Kosong sebagai jarak
-        ["No", "Tanggal", "Target Pekerjaan", "Prioritas", "Checklist", "Catatan"] // Baris 3: Header Tabel
-    ];
-
-    // Isi Data Target (Dimulai dari Baris 4)
-    sortedTargets.forEach((t, index) => {
-        // Gabungkan tanggal dan waktu (jika ada) untuk Excel
-        const tanggalDanJam = t.time ? `${formatDate(t.deadline)} (Jam: ${t.time})` : formatDate(t.deadline);
-        
-        wsData.push([
-            index + 1,
-            tanggalDanJam,
-            t.name,
-            t.priority ? "⭐ Ya" : "-",
-            "[    ]", // Kotak checklist fisik
-            ""       // Catatan kosong
-        ]);
-    });
-
-    // Buat Worksheet
-    const ws = XLSX.utils.aoa_to_sheet(wsData);
-
-    // 2. Gabungkan Cell Judul (Merge dari kolom A sampai F)
-    ws['!merges'] = [
-        { s: { r: 0, c: 0 }, e: { r: 0, c: 5 } } 
-    ];
-
-    // 3. Atur Lebar Kolom agar proporsional di kertas A4
-    ws['!cols'] = [
-        {wch: 5},   // A: No
-        {wch: 22},  // B: Tanggal
-        {wch: 40},  // C: Target Pekerjaan
-        {wch: 12},  // D: Prioritas
-        {wch: 15},  // E: Checklist
-        {wch: 25}   // F: Catatan
-    ];
-
-    // 4. Atur Tinggi Baris (Biar lega saat ditulis tangan)
-    ws['!rows'] = [{hpt: 35}, {hpt: 15}]; // Baris judul (tinggi 35), jarak (tinggi 15)
-    for(let i = 2; i < wsData.length; i++) {
-        ws['!rows'].push({hpt: 25}); // Baris tabel (tinggi 25)
-    }
-
-    // 5. STYLING: Border dan Warna
-    const borderStyle = {
-        top: { style: "thin", color: { auto: 1 } },
-        bottom: { style: "thin", color: { auto: 1 } },
-        left: { style: "thin", color: { auto: 1 } },
-        right: { style: "thin", color: { auto: 1 } }
-    };
-
-    // Menerapkan gaya (style) ke masing-masing cell
-    for (let R = 0; R < wsData.length; ++R) {
-        for (let C = 0; C < 6; ++C) {
-            let cellAddress = XLSX.utils.encode_cell({r: R, c: C});
-            
-            // Buat cell kosong jika belum ada objeknya (dibutuhkan untuk render border)
-            if (!ws[cellAddress]) ws[cellAddress] = { t: 's', v: '' };
-
-            if (R === 0) {
-                // Style Judul Utama
-                ws[cellAddress].s = {
-                    font: { bold: true, sz: 14, color: { rgb: "FF6B35" } },
-                    alignment: { horizontal: "center", vertical: "center" }
-                };
-            } else if (R === 2) {
-                // Style Header Tabel (Gelap)
-                ws[cellAddress].s = {
-                    font: { bold: true, color: { rgb: "FFFFFF" } },
-                    fill: { fgColor: { rgb: "2D3142" } },
-                    alignment: { horizontal: "center", vertical: "center" },
-                    border: borderStyle
-                };
-            } else if (R > 2) {
-                // Style Isi Data Tabel (Rata Kiri untuk Nama Target & Catatan)
-                const isLeftAlign = (C === 2 || C === 5);
-                ws[cellAddress].s = {
-                    alignment: { horizontal: isLeftAlign ? "left" : "center", vertical: "center", wrapText: true },
-                    border: borderStyle
-                };
-            }
-        }
-    }
-
-    // 6. Buat File dan Download
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "Jadwal Target");
-    
-    const fileName = `Jadwal_${agenda.name.replace(/\s+/g, '_')}.xlsx`;
-    XLSX.writeFile(wb, fileName);
 }
 
 // ================================
@@ -1156,16 +1065,11 @@ function toggleArchive(event, agendaId) {
     event.stopPropagation();
     const agenda = agendas.find(a => a.id === agendaId);
     if (agenda) {
-        // Ubah status arsip (jika true jadi false, jika false jadi true)
         agenda.isArchived = !agenda.isArchived; 
         saveData();
         
-        // Pindah halaman secara otomatis
-        if (agenda.isArchived) {
-            renderAgendas(); 
-        } else {
-            renderArchive();
-        }
+        if (agenda.isArchived) renderAgendas(); 
+        else renderArchive();
     }
 }
 
@@ -1177,7 +1081,6 @@ function renderArchive() {
     content.style.display = "grid"; 
     content.innerHTML = "";
 
-    // Ambil HANYA agenda yang diarsipkan
     const archivedAgendas = agendas.filter(a => a.isArchived);
 
     if (archivedAgendas.length === 0) {
@@ -1193,7 +1096,7 @@ function renderArchive() {
 
         const card = document.createElement("div");
         card.className = "agenda-card";
-        card.style.opacity = "0.8"; // Tampilan dibuat sedikit transparan agar terasa seperti arsip lama
+        card.style.opacity = "0.8"; 
         card.innerHTML = `
             <div class="agenda-card-header">
                 <div>
@@ -1202,9 +1105,7 @@ function renderArchive() {
                     <p>${agenda.description || "Tidak ada deskripsi"}</p>
                 </div>
                 <div style="display: flex; gap: 0.5rem; align-items:flex-start;">
-                    <!-- Tombol Restore (Kembalikan) -->
                     <button onclick="toggleArchive(event, '${agenda.id}')" style="background:#EBF5FF; color:#3B82F6; border:none; width:36px; height:36px; border-radius:10px; cursor:pointer;" title="Kembalikan ke Semua Agenda">🔙</button>
-                    <!-- Tombol Hapus Permanen -->
                     <button class="delete-btn" onclick="deleteAgenda(event, '${agenda.id}')" title="Hapus Permanen">🗑</button>
                 </div>
             </div>
@@ -1221,3 +1122,328 @@ function renderArchive() {
         content.appendChild(card);
     });
 }
+
+// ================================
+// HALAMAN COUNTDOWN & HABIT
+// ================================
+function renderCountdowns() {
+    document.getElementById("pageTitle").innerText = "Countdown & Target Habit";
+    document.getElementById("pageSubtitle").innerText = "Hitung mundur ke acara penting atau bangun kebiasaan harian Anda.";
+    
+    const content = document.getElementById("content");
+    content.style.display = "grid"; 
+    content.innerHTML = "";
+
+    const header = document.querySelector(".header");
+    let actionBtn = header.querySelector(".btn-primary");
+    actionBtn.innerText = "+ Tambah Countdown";
+    actionBtn.onclick = openCountdownModal;
+
+    if (countdowns.length === 0) {
+        content.innerHTML = `<div class="empty-state"><h2>Belum ada Countdown</h2><p>Mulai target kebiasaan baru atau hitung mundur ke hari H!</p></div>`;
+        return;
+    }
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    countdowns.forEach(cd => {
+        const targetDate = new Date(cd.date);
+        targetDate.setHours(0, 0, 0, 0);
+        
+        const diffTime = targetDate - today;
+        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+        
+        let displayStr = diffDays;
+        let labelStr = "HARI LAGI";
+        let colorStr = "#FF6B35";
+
+        if (diffDays === 0) {
+            displayStr = "HARI INI";
+            labelStr = "ACARA TIBA";
+            colorStr = "#217346"; 
+        } else if (diffDays < 0) {
+            displayStr = Math.abs(diffDays);
+            labelStr = "HARI TERLEWAT";
+            colorStr = "#9094A6"; 
+        }
+
+        const card = document.createElement("div");
+        card.className = "countdown-card";
+        card.innerHTML = `
+            <div class="cd-actions">
+                <button class="delete-btn" onclick="deleteCountdown('${cd.id}')" title="Hapus">🗑</button>
+            </div>
+            <h3 class="cd-title">${cd.name}</h3>
+            <span class="cd-date">🎯 ${formatDate(cd.date)}</span>
+            
+            <div class="cd-number-box">
+                <div class="cd-number" style="color: ${colorStr}; font-size: ${isNaN(displayStr) ? '2.5rem' : '4rem'};">${displayStr}</div>
+                <span class="cd-label">${labelStr}</span>
+            </div>
+
+            <button class="btn-export-cd" onclick="exportCountdownExcel('${cd.id}')">
+                📊 Cetak Tracker (Excel)
+            </button>
+        `;
+        content.appendChild(card);
+    });
+}
+
+function openCountdownModal() {
+    document.getElementById("countdownForm").reset();
+    document.getElementById("countdownModal").classList.remove("hidden");
+}
+
+function closeCountdownModal() {
+    document.getElementById("countdownModal").classList.add("hidden");
+}
+
+function deleteCountdown(id) {
+    if(!confirm("Hapus countdown ini?")) return;
+    countdowns = countdowns.filter(c => c.id !== id);
+    saveData();
+    renderCountdowns();
+}
+
+document.getElementById("countdownForm").addEventListener("submit", function(e) {
+    e.preventDefault();
+    const name = document.getElementById("countdownName").value;
+    const date = document.getElementById("countdownDate").value;
+
+    countdowns.push({ 
+        id: Date.now().toString(), 
+        name, 
+        date, 
+        createdAt: new Date().toISOString() 
+    });
+
+    saveData();
+    closeCountdownModal();
+    renderCountdowns();
+});
+
+// ================================
+// EXPORT EXCEL TRACKER COUNTDOWN (DIGABUNG DALAM 1 SHEET / VERTIKAL)
+// ================================
+function exportCountdownExcel(id) {
+    const cd = countdowns.find(c => c.id === id);
+    if (!cd) return;
+
+    const startDate = new Date(cd.createdAt);
+    startDate.setHours(0,0,0,0);
+    const endDate = new Date(cd.date);
+    endDate.setHours(0,0,0,0);
+
+    if (endDate < startDate) {
+        alert("Tanggal target sudah terlewat saat countdown dibuat.");
+        return;
+    }
+
+    const months = ["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember"];
+    
+    // 1. Inisialisasi Data Utama untuk 1 Sheet
+    let wsData = [
+        [`HABIT TRACKER: ${cd.name.toUpperCase()}`],
+        [`Total Hari / Rentang: ${formatDate(cd.createdAt)} s/d ${formatDate(cd.date)}`],
+        [] // Baris kosong sebagai spasi
+    ];
+
+    let merges = [
+        { s: { r: 0, c: 0 }, e: { r: 0, c: 6 } }, // Judul utama merge kolom A-G
+        { s: { r: 1, c: 0 }, e: { r: 1, c: 6 } }  // Subtitle merge kolom A-G
+    ];
+    
+    let rowHeights = [
+        { hpt: 30 }, // Baris 0: Judul
+        { hpt: 20 }, // Baris 1: Subtitle
+        { hpt: 15 }  // Baris 2: Spasi
+    ];
+
+    let currentRow = 3; // Penanda indeks baris saat ini
+
+    let currIter = new Date(startDate.getFullYear(), startDate.getMonth(), 1);
+    const finalLimit = new Date(endDate.getFullYear(), endDate.getMonth(), 1);
+
+    // Loop otomatis untuk setiap bulan dan susun secara vertikal ke bawah
+    while (currIter <= finalLimit) {
+        let targetYear = currIter.getFullYear();
+        let targetMonth = currIter.getMonth();
+        let monthName = months[targetMonth];
+
+        // Baris Header Nama Bulan (Misal: SEPTEMBER 2026)
+        wsData.push([`${monthName.toUpperCase()} ${targetYear}`]);
+        merges.push({ s: { r: currentRow, c: 0 }, e: { r: currentRow, c: 6 } });
+        rowHeights.push({ hpt: 30 });
+        currentRow++;
+
+        // Baris Nama Hari
+        wsData.push(["Minggu", "Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu"]);
+        rowHeights.push({ hpt: 25 });
+        currentRow++;
+
+        // Grid Tanggal Bulan Ini
+        const firstDay = new Date(targetYear, targetMonth, 1).getDay();
+        const daysInMonth = new Date(targetYear, targetMonth + 1, 0).getDate();
+
+        let currentWeek = [];
+        for (let i = 0; i < firstDay; i++) {
+            currentWeek.push("");
+        }
+
+        for (let day = 1; day <= daysInMonth; day++) {
+            const currentDate = new Date(targetYear, targetMonth, day);
+            currentDate.setHours(0,0,0,0);
+            
+            let cellContent = `${day}`;
+            if (currentDate >= startDate && currentDate <= endDate) {
+                cellContent += `\n[   ] Target`;
+            }
+
+            currentWeek.push(cellContent);
+
+            if (currentWeek.length === 7) {
+                wsData.push(currentWeek);
+                rowHeights.push({ hpt: 90 }); // Tinggi kotak tanggal kalender
+                currentRow++;
+                currentWeek = [];
+            }
+        }
+
+        if (currentWeek.length > 0) {
+            while (currentWeek.length < 7) {
+                currentWeek.push("");
+            }
+            wsData.push(currentWeek);
+            rowHeights.push({ hpt: 90 });
+            currentRow++;
+        }
+
+        // Berikan jarak 2 baris kosong sebelum masuk ke bulan berikutnya
+        wsData.push([]);
+        wsData.push([]);
+        rowHeights.push({ hpt: 15 }, { hpt: 15 });
+        currentRow += 2;
+
+        currIter.setMonth(currIter.getMonth() + 1);
+    }
+
+    // 2. Buat Worksheet & Terapkan Pengaturan Layout
+    const ws = XLSX.utils.aoa_to_sheet(wsData);
+    ws['!merges'] = merges;
+    ws['!cols'] = Array(7).fill({ wch: 18 });
+    ws['!rows'] = rowHeights;
+
+    // 3. Styling Border dan Pewarnaan
+    const borderStyle = {
+        top: { style: "medium", color: { rgb: "000000" } },
+        bottom: { style: "medium", color: { rgb: "000000" } },
+        left: { style: "medium", color: { rgb: "000000" } },
+        right: { style: "medium", color: { rgb: "000000" } }
+    };
+
+    for (let R = 0; R < wsData.length; ++R) {
+        let rowData = wsData[R];
+        // Lewati baris yang benar-benar kosong (spasi antar bulan)
+        if (!rowData || rowData.length === 0 || rowData.every(val => val === "")) {
+            continue;
+        }
+
+        for (let C = 0; C < 7; ++C) {
+            let cellAddress = XLSX.utils.encode_cell({r: R, c: C});
+            if (!ws[cellAddress]) ws[cellAddress] = { t: 's', v: '' };
+
+            if (R === 0) {
+                // Judul Utama
+                ws[cellAddress].s = { font: { bold: true, sz: 14, color: { rgb: "FF6B35" } }, alignment: { horizontal: "center", vertical: "center" } };
+            } else if (R === 1) {
+                // Subtitle
+                ws[cellAddress].s = { font: { bold: true, sz: 11, color: { rgb: "64748b" } }, alignment: { horizontal: "center", vertical: "center" } };
+            } else {
+                // Cek apakah baris ini adalah header nama bulan
+                if (rowData.length === 1 && rowData[0] && typeof rowData[0] === 'string' && months.some(m => rowData[0].toUpperCase().includes(m.toUpperCase()))) {
+                    ws[cellAddress].s = { font: { bold: true, sz: 13, color: { rgb: "FFFFFF" } }, fill: { fgColor: { rgb: "0F766E" } }, alignment: { horizontal: "center", vertical: "center" }, border: borderStyle };
+                } else if (rowData[0] === "Minggu" && rowData[1] === "Senin") {
+                    // Header Hari (Minggu - Sabtu)
+                    ws[cellAddress].s = { font: { bold: true, color: { rgb: "FFFFFF" } }, fill: { fgColor: { rgb: "2D3142" } }, alignment: { horizontal: "center", vertical: "center" }, border: borderStyle };
+                } else {
+                    // Kotak Tanggal Kalender
+                    ws[cellAddress].s = { 
+                        alignment: { horizontal: "left", vertical: "top", wrapText: true }, 
+                        border: borderStyle,
+                        font: { sz: 10, color: { rgb: "2D3142" } } 
+                    };
+                }
+            }
+        }
+    }
+
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Habit Tracker");
+    XLSX.writeFile(wb, `Kalender_Habit_${cd.name.replace(/\s+/g, '_')}.xlsx`);
+}
+
+// ================================
+// NAVIGATION HANDLER & INIT
+// ================================
+document.querySelectorAll(".nav-item").forEach(button => {
+    button.addEventListener("click", function() {
+        document.querySelectorAll(".nav-item").forEach(item => item.classList.remove("active"));
+        this.classList.add("active");
+        
+        const page = this.dataset.page;
+        if (page === "dashboard") {
+            const actionBtn = document.querySelector(".header .btn-primary");
+            actionBtn.innerText = "+ Tambah Agenda";
+            actionBtn.onclick = openAgendaModal;
+            renderDashboard();
+        }
+        else if (page === "agenda") {
+            const actionBtn = document.querySelector(".header .btn-primary");
+            actionBtn.innerText = "+ Tambah Agenda";
+            actionBtn.onclick = openAgendaModal;
+            renderAgendas();
+        }
+        else if (page === "timeline") {
+            const actionBtn = document.querySelector(".header .btn-primary");
+            actionBtn.innerText = "+ Tambah Agenda";
+            actionBtn.onclick = openAgendaModal;
+            renderTimeline(); 
+        }
+        else if (page === "all-targets") {
+            const actionBtn = document.querySelector(".header .btn-primary");
+            actionBtn.innerText = "+ Tambah Agenda";
+            actionBtn.onclick = openAgendaModal;
+            renderSpecialPage('all-targets');
+        }
+        else if (page === "priority") {
+            const actionBtn = document.querySelector(".header .btn-primary");
+            actionBtn.innerText = "+ Tambah Agenda";
+            actionBtn.onclick = openAgendaModal;
+            renderSpecialPage('priority');
+        }
+        else if (page === "completed") {
+            const actionBtn = document.querySelector(".header .btn-primary");
+            actionBtn.innerText = "+ Tambah Agenda";
+            actionBtn.onclick = openAgendaModal;
+            renderSpecialPage('completed');
+        }
+        else if (page === "archive") {
+            const actionBtn = document.querySelector(".header .btn-primary");
+            actionBtn.innerText = "+ Tambah Agenda";
+            actionBtn.onclick = openAgendaModal;
+            renderArchive(); 
+        }
+        else if (page === "countdown") {
+            renderCountdowns(); 
+        }
+    });
+});
+
+window.addEventListener('resize', () => {
+    if (document.getElementById("pageTitle").innerText === "Timeline Agenda") {
+        fixTimelineLines();
+    }
+});
+
+renderDashboard();
