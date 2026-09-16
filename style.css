@@ -807,3 +807,93 @@ nav {
         position: static;
     }
 }
+
+/* ================================
+   COUNTDOWN CARDS
+   ================================ */
+.countdown-card {
+    background: #FFFFFF;
+    padding: 2rem;
+    border-radius: 24px;
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.03);
+    border: 1px solid #F4F5F7;
+    text-align: center;
+    position: relative;
+    transition: transform 0.3s ease, box-shadow 0.3s ease;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
+
+.countdown-card:hover {
+    transform: translateY(-5px);
+    box-shadow: 0 15px 45px rgba(0, 0, 0, 0.06);
+}
+
+.cd-actions {
+    position: absolute;
+    top: 1rem;
+    right: 1rem;
+    display: flex;
+    gap: 0.5rem;
+}
+
+.cd-title {
+    font-size: 1.2rem;
+    color: #2D3142;
+    font-weight: 700;
+    margin-top: 1rem;
+    margin-bottom: 0.5rem;
+}
+
+.cd-date {
+    font-size: 0.85rem;
+    color: #9094A6;
+    background: #FAFBFC;
+    padding: 0.4rem 1rem;
+    border-radius: 50px;
+    font-weight: 600;
+}
+
+.cd-number-box {
+    margin: 1.5rem 0;
+}
+
+.cd-number {
+    font-size: 4rem;
+    font-weight: 700;
+    color: #FF6B35;
+    line-height: 1;
+}
+
+.cd-label {
+    font-size: 1rem;
+    color: #9094A6;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    display: block;
+    margin-top: 0.5rem;
+}
+
+.btn-export-cd {
+    background: #E8F5E9;
+    color: #2E7D32;
+    border: none;
+    padding: 0.8rem 1rem;
+    border-radius: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    width: 100%;
+    margin-top: auto;
+    font-family: inherit;
+    transition: all 0.2s;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.btn-export-cd:hover {
+    background: #C8E6C9;
+}
