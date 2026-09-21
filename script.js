@@ -7,6 +7,9 @@ let currentCalMonth = new Date().getMonth();
 let currentCalYear = new Date().getFullYear();
 let selectedFilterDate = null;
 let countdowns = JSON.parse(localStorage.getItem("tm_countdowns")) || [];
+let specialSortOrder = 'asc';
+let specialFilterDate = '';
+
 
 // ================================
 // SAVE DATA & FORMAT DATE
@@ -569,7 +572,22 @@ function renderTargets(agenda) {
 }
 
 // ================================
-// HALAMAN REKAP TARGET
+// LOGIKA FILTER REKAP TARGET
+// ================================
+function applySpecialFilter(type) {
+    specialSortOrder = document.getElementById("specialSortOrder").value;
+    specialFilterDate = document.getElementById("specialFilterDate").value;
+    renderSpecialPage(type);
+}
+
+function resetSpecialFilter(type) {
+    specialSortOrder = 'asc';
+    specialFilterDate = '';
+    renderSpecialPage(type);
+}
+
+// ================================
+// HALAMAN REKAP TARGET (DENGAN FILTER & SORTIR)
 // ================================
 function renderSpecialPage(type) {
     let title = "";
@@ -583,7 +601,7 @@ function renderSpecialPage(type) {
         subtitle = "Pekerjaan yang telah Anda selesaikan.";
     } else if (type === 'all-targets') {
         title = "Semua Target";
-        subtitle = "Rekap seluruh target dari semua agenda, diurutkan dari deadline terdekat.";
+        subtitle = "Rekap seluruh target dari semua agenda.";
     }
     
     document.getElementById("pageTitle").innerText = title;
@@ -592,19 +610,35 @@ function renderSpecialPage(type) {
     const content = document.getElementById("content");
     content.style.display = "block";
     
-    let exportBtn = `
-        <div style="display: flex; justify-content: flex-end; margin-bottom: 1.5rem;">
+    // UI Filter dan Sortir
+    let filterUI = `
+        <div style="display: flex; gap: 0.8rem; align-items: center; flex-wrap: wrap;">
+            <input type="date" id="specialFilterDate" value="${specialFilterDate}" onchange="applySpecialFilter('${type}')" style="padding: 0.6rem; border-radius: 8px; border: 1px solid #E5E7EB; color: #2D3142;">
+            
+            <select id="specialSortOrder" onchange="applySpecialFilter('${type}')" style="padding: 0.6rem; border-radius: 8px; border: 1px solid #E5E7EB; color: #2D3142; cursor: pointer;">
+                <option value="asc" ${specialSortOrder === 'asc' ? 'selected' : ''}>🔽 Terdekat</option>
+                <option value="desc" ${specialSortOrder === 'desc' ? 'selected' : ''}>🔼 Terlama</option>
+            </select>
+            
+            ${specialFilterDate ? `<button onclick="resetSpecialFilter('${type}')" style="background: none; border: none; color: #FF4D4D; cursor: pointer; font-weight: 600; font-size: 0.9rem;">✖ Reset Filter</button>` : ''}
+        </div>
+    `;
+
+    let actionPanel = `
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem; flex-wrap: wrap; gap: 1rem;">
+            ${filterUI}
             <button class="btn-primary" onclick="exportFilteredTargetsToExcel('${type}')" style="background-color: #217346; box-shadow: 0 6px 20px rgba(33, 115, 70, 0.3);">
                 📊 Export Excel
             </button>
         </div>
     `;
 
-    content.innerHTML = exportBtn + `<div class="target-list-page" style="display:flex; flex-direction:column; gap:1rem;"></div>`;
+    content.innerHTML = actionPanel + `<div class="target-list-page" style="display:flex; flex-direction:column; gap:1rem;"></div>`;
     const container = content.querySelector(".target-list-page");
     
     let filteredTargets = [];
 
+    // Mengumpulkan target yang BELUM DIARSIP berdasarkan tab yang dibuka
     agendas.filter(a => !a.isArchived).forEach(agenda => {
         agenda.targets.forEach(target => {
             if (type === 'priority' && target.priority && !target.completed) {
@@ -617,14 +651,20 @@ function renderSpecialPage(type) {
         });
     });
 
+    // 1. Terapkan Filter Tanggal (Jika Anda memilih tanggal dari kalender filter)
+    if (specialFilterDate) {
+        filteredTargets = filteredTargets.filter(t => t.deadline === specialFilterDate);
+    }
+
+    // 2. Terapkan Sortir Urutan (Terdekat / Terlama)
     filteredTargets.sort((a, b) => {
         const dateA = a.deadline ? new Date(a.deadline).getTime() : Infinity;
         const dateB = b.deadline ? new Date(b.deadline).getTime() : Infinity;
-        return dateA - dateB;
+        return specialSortOrder === 'asc' ? dateA - dateB : dateB - dateA;
     });
 
     if (filteredTargets.length === 0) {
-        container.innerHTML = `<div class="empty-state"><h2>Belum ada target</h2><p>Tidak ada data untuk ditampilkan di sini.</p></div>`;
+        container.innerHTML = `<div class="empty-state"><h2>Tidak ada data</h2><p>Data target tidak ditemukan atau tidak ada jadwal di tanggal ini.</p></div>`;
         return;
     }
 
@@ -649,7 +689,7 @@ function renderSpecialPage(type) {
 }
 
 // ================================
-// EXPORT EXCEL SEMUA TARGET
+// EXPORT EXCEL SEMUA TARGET (DENGAN FILTER & SORTIR)
 // ================================
 function exportFilteredTargetsToExcel(type) {
     let filteredTargets = [];
@@ -667,20 +707,29 @@ function exportFilteredTargetsToExcel(type) {
         });
     });
 
-    if (filteredTargets.length === 0) {
-        alert("Tidak ada data target untuk diekspor.");
-        return;
+    // 1. Terapkan Filter Tanggal untuk Excel
+    if (specialFilterDate) {
+        filteredTargets = filteredTargets.filter(t => t.deadline === specialFilterDate);
     }
 
+    // 2. Terapkan Sortir Urutan (Terdekat / Terlama) untuk Excel
     filteredTargets.sort((a, b) => {
         const dateA = a.deadline ? new Date(a.deadline).getTime() : Infinity;
         const dateB = b.deadline ? new Date(b.deadline).getTime() : Infinity;
-        return dateA - dateB;
+        return specialSortOrder === 'asc' ? dateA - dateB : dateB - dateA;
     });
+
+    if (filteredTargets.length === 0) {
+        alert("Tidak ada data target untuk diekspor pada filter ini.");
+        return;
+    }
 
     if (type === 'priority') judulExcel = "REKAP TARGET PRIORITAS";
     else if (type === 'completed') judulExcel = "REKAP TARGET SELESAI";
     else judulExcel = "REKAP SEMUA TARGET";
+
+    // 3. Tambahkan keterangan tanggal di judul jika sedang difilter
+    if (specialFilterDate) judulExcel += ` (${formatDate(specialFilterDate)})`;
 
     let wsData = [
         [judulExcel], [], 
@@ -888,16 +937,15 @@ function renderTimeline() {
     const content = document.getElementById("content");
     content.style.display = "block";
 
-    const activeAgendas = agendas.filter(a => !a.isArchived);
-
-    const sortedAgendas = activeAgendas.sort((a, b) => {
+    // REVISI: Menggunakan seluruh data agendas (termasuk yang diarsip)
+    const sortedAgendas = [...agendas].sort((a, b) => {
         const dateA = a.date ? new Date(a.date).getTime() : Infinity;
         const dateB = b.date ? new Date(b.date).getTime() : Infinity;
         return dateA - dateB;
     });
 
     if (sortedAgendas.length === 0) {
-        content.innerHTML = `<div class="empty-state"><h2>Belum ada agenda aktif</h2><p>Tambahkan agenda terlebih dahulu.</p></div>`;
+        content.innerHTML = `<div class="empty-state"><h2>Belum ada agenda</h2><p>Tambahkan agenda terlebih dahulu.</p></div>`;
         return;
     }
 
@@ -1390,6 +1438,10 @@ document.querySelectorAll(".nav-item").forEach(button => {
     button.addEventListener("click", function() {
         document.querySelectorAll(".nav-item").forEach(item => item.classList.remove("active"));
         this.classList.add("active");
+        
+        // REVISI: Bersihkan pengaturan filter saat berganti menu
+        specialSortOrder = 'asc';
+        specialFilterDate = '';
         
         const page = this.dataset.page;
         if (page === "dashboard") {
