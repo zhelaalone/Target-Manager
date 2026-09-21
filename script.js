@@ -7,8 +7,12 @@ let currentCalMonth = new Date().getMonth();
 let currentCalYear = new Date().getFullYear();
 let selectedFilterDate = null;
 let countdowns = JSON.parse(localStorage.getItem("tm_countdowns")) || [];
+
+// Variabel Memori Filter untuk Halaman Rekap Target
 let specialSortOrder = 'asc';
 let specialFilterDate = '';
+let specialFilterStatus = 'all'; // Status: all, pending, completed
+let specialFilterPriority = 'all'; // Prioritas: all, priority, normal
 
 
 // ================================
@@ -689,7 +693,7 @@ function renderSpecialPage(type) {
 }
 
 // ================================
-// EXPORT EXCEL SEMUA TARGET (DENGAN FILTER & SORTIR)
+// EXPORT EXCEL SEMUA TARGET (SINKRON DENGAN SEMUA FILTER)
 // ================================
 function exportFilteredTargetsToExcel(type) {
     let filteredTargets = [];
@@ -707,12 +711,21 @@ function exportFilteredTargetsToExcel(type) {
         });
     });
 
-    // 1. Terapkan Filter Tanggal untuk Excel
+    // Terapkan Filter Status dan Prioritas (hanya untuk All Targets)
+    if (type === 'all-targets') {
+        if (specialFilterStatus === 'completed') filteredTargets = filteredTargets.filter(t => t.completed);
+        else if (specialFilterStatus === 'pending') filteredTargets = filteredTargets.filter(t => !t.completed);
+        
+        if (specialFilterPriority === 'priority') filteredTargets = filteredTargets.filter(t => t.priority);
+        else if (specialFilterPriority === 'normal') filteredTargets = filteredTargets.filter(t => !t.priority);
+    }
+
+    // Terapkan Filter Tanggal
     if (specialFilterDate) {
         filteredTargets = filteredTargets.filter(t => t.deadline === specialFilterDate);
     }
 
-    // 2. Terapkan Sortir Urutan (Terdekat / Terlama) untuk Excel
+    // Terapkan Sortir Urutan
     filteredTargets.sort((a, b) => {
         const dateA = a.deadline ? new Date(a.deadline).getTime() : Infinity;
         const dateB = b.deadline ? new Date(b.deadline).getTime() : Infinity;
@@ -728,7 +741,6 @@ function exportFilteredTargetsToExcel(type) {
     else if (type === 'completed') judulExcel = "REKAP TARGET SELESAI";
     else judulExcel = "REKAP SEMUA TARGET";
 
-    // 3. Tambahkan keterangan tanggal di judul jika sedang difilter
     if (specialFilterDate) judulExcel += ` (${formatDate(specialFilterDate)})`;
 
     let wsData = [
