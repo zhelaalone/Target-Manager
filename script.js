@@ -189,7 +189,7 @@ document.getElementById("login-form").addEventListener("submit", async (e) => {
     
     btnSubmit.innerText = "Memeriksa ke Cloud...";
     btnSubmit.disabled = true;
-    errorMsg.innerText = ""; // Bersihkan error sebelumnya
+    errorMsg.innerText = ""; // Bersihkan pesan error sebelumnya
 
     try {
         // 1. Cek apakah yang login adalah Super Admin
@@ -213,6 +213,7 @@ document.getElementById("login-form").addEventListener("submit", async (e) => {
         
         if (!adminSnap.empty) {
             const adminData = adminSnap.docs[0].data();
+            // Jika field password ada di database, gunakan itu. Jika belum ada, gunakan 2026
             const adminPass = adminData.password || "2026"; 
             
             if (password === adminPass) {
