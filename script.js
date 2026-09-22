@@ -1,1398 +1,1661 @@
-// ==========================================
-// SISTEM ABSENSI HYBRID + FIREBASE + QOBLIYAH/BAKDIYAH + LIVE FILTER + POPUP STATUS
-// ==========================================
+// ================================
+// DATA & STATE MANAGEMENT
+// ================================
+let agendas = JSON.parse(localStorage.getItem("targetManager")) || [];
+let currentAgendaId = null;
+let currentCalMonth = new Date().getMonth();
+let currentCalYear = new Date().getFullYear();
+let selectedFilterDate = null;
+let countdowns = JSON.parse(localStorage.getItem("tm_countdowns")) || [];
 
-import { initializeApp } from "https://www.gstatic.com/firebasejs/12.18.0/firebase-app.js";
-import { getFirestore, collection, addDoc, getDocs, onSnapshot, query, where, doc, setDoc, writeBatch, deleteDoc, updateDoc } from "https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js";
+// Variabel Memori Filter untuk Halaman Rekap Target
+let specialSortOrder = 'asc';
+let specialFilterDate = '';
+let specialFilterStatus = 'all'; // Status: all, pending, completed
+let specialFilterPriority = 'all'; // Prioritas: all, priority, normal
 
-const firebaseConfig = {
-    apiKey: "AIzaSyDmzBCTSPH8IgLY030UrKo0DVAMfE6_H30",
-    authDomain: "absensi-belajar-malam.firebaseapp.com",
-    projectId: "absensi-belajar-malam",
-    storageBucket: "absensi-belajar-malam.firebasestorage.app",
-    messagingSenderId: "701554843247",
-    appId: "1:701554843247:web:16891ac550dcf587aab79a"
-};
 
-const app = initializeApp(firebaseConfig);
-const db = getFirestore(app);
+// ================================
+// SAVE DATA & FORMAT DATE
+// ================================
+function saveData() {
+    localStorage.setItem("targetManager", JSON.stringify(agendas));
+    localStorage.setItem("tm_countdowns", JSON.stringify(countdowns));
+}
 
-let currentUserData = null;
-let html5QrcodeScanner = null;
-let unsubscribeDashboard = null; 
-let unsubscribeSession = null;
-let activeSessionData = null; 
+function formatDate(date) {
+    if (!date) return "-";
+    return new Date(date).toLocaleDateString("id-ID", {
+        day: "numeric", month: "long", year: "numeric"
+    });
+}
 
-let allRekapData = []; 
-let filteredRekapData = [];
-let currentEditIndex = -1; // Variabel penyimpan baris yang sedang diedit di modal
+function getCountdownText(dateString) {
+    if (!dateString) return "-";
+    const targetDate = new Date(dateString);
+    targetDate.setHours(0, 0, 0, 0);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
 
-const DEFAULT_ZONES = [
-    { id: "G_RIYADH", nama: "Gedung Riyadh", kode: "QR_G_RIYADH" },
-    { id: "G_MADINAH", nama: "Gedung Madinah", kode: "QR_G_MADINAH" },
-    { id: "MASJID", nama: "Masjid", kode: "QR_MASJID" },
-    { id: "AUDITORIUM", nama: "Auditorium", kode: "QR_AUDITORIUM" }
-];
+    const diffTime = targetDate - today;
+    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
 
-async function initSystem() {
-    try {
-        // 1. Inisialisasi zona default jika koleksi zones kosong
-        const zoneSnap = await getDocs(collection(db, "zones"));
-        if (zoneSnap.empty) {
-            const batch = writeBatch(db);
-            DEFAULT_ZONES.forEach(z => batch.set(doc(db, "zones", z.id), z));
-            await batch.commit();
-        }
+    if (diffDays === 0) return "Hari Ini!";
+    if (diffDays === 1) return "Besok";
+    if (diffDays > 1) return `${diffDays} Hari Lagi`;
+    if (diffDays < 0) return `Terlewat ${Math.abs(diffDays)} Hari`;
+    return "-";
+}
 
-        // 2. OTOMATIS SINKRONISASI ZONA DARI DATA GURU
-        const guruSnap = await getDocs(collection(db, "guru"));
-        if (!guruSnap.empty) {
-            let existingZonesMap = new Map();
-            const currentZonesSnap = await getDocs(collection(db, "zones"));
-            currentZonesSnap.forEach(d => existingZonesMap.set(d.data().nama.toLowerCase(), d.data()));
+// ================================
+// HALAMAN DASHBOARD
+// ================================
+function renderDashboard() {
+    document.getElementById("pageTitle").innerText = "Dashboard";
+    document.getElementById("pageSubtitle").innerText = "Ringkasan progress target dan agenda Anda.";
+    
+    const content = document.getElementById("content");
+    content.style.display = "block";
 
-            const batchSync = writeBatch(db);
-            let hasNewZone = false;
+    const today = new Date();
+    today.setHours(0, 0, 0, 0); 
 
-            guruSnap.forEach(gDoc => {
-                let guruZona = gDoc.data().Zona;
-                if (guruZona && guruZona !== "-" && !existingZonesMap.has(guruZona.toLowerCase())) {
-                    let generatedId = guruZona.toUpperCase().replace(/[^A-Z0-9]/g, '_');
-                    let generatedKode = `QR_${generatedId}_${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
-                    
-                    batchSync.set(doc(db, "zones", generatedId), {
-                        id: generatedId,
-                        nama: guruZona,
-                        kode: generatedKode
+    let overdueTargets = [];
+    let totalTargets = 0;
+    let completedCount = 0;
+
+    const activeAgendas = agendas.filter(a => !a.isArchived);
+
+    activeAgendas.forEach(agenda => {
+        agenda.targets.forEach(target => {
+            totalTargets++;
+            if (target.completed) completedCount++;
+
+            if (!target.completed && target.deadline) {
+                const deadlineDate = new Date(target.deadline);
+                deadlineDate.setHours(0, 0, 0, 0);
+                
+                if (deadlineDate < today) {
+                    overdueTargets.push({
+                        ...target,
+                        agendaName: agenda.name,
+                        agendaId: agenda.id
                     });
-                    existingZonesMap.set(guruZona.toLowerCase(), true);
-                    hasNewZone = true;
                 }
-            });
-
-            if (hasNewZone) {
-                await batchSync.commit();
             }
-        }
-    } catch (e) {
-        console.error("Gagal sinkronisasi sistem zona:", e);
+        });
+    });
+
+    overdueTargets.sort((a, b) => new Date(a.deadline) - new Date(b.deadline));
+
+    let overdueHTML = "";
+    if (overdueTargets.length > 0) {
+        overdueHTML = `
+            <div style="background: #fff1f2; border-left: 5px solid #e11d48; padding: 1.25rem; border-radius: 12px; margin-bottom: 2rem; box-shadow: 0 4px 15px rgba(225, 29, 72, 0.06);">
+                <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 1rem;">
+                    <h3 style="color: #be123c; margin: 0; font-size: 1.05rem; display: flex; align-items: center; gap: 0.5rem;">
+                        ⚠️ Perhatian: ${overdueTargets.length} Target Melewati Deadline!
+                    </h3>
+                </div>
+                <div style="display: flex; flex-direction: column; gap: 0.75rem;">
+                    ${overdueTargets.map(target => {
+                        const timeDisplay = target.time ? ` ⏰ ${target.time}` : "";
+                        return `
+                        <div style="display: flex; align-items: center; justify-content: space-between; background: #ffffff; padding: 0.75rem 1rem; border-radius: 8px; border: 1px solid #fecdd3;">
+                            <div style="display: flex; align-items: center; gap: 0.75rem;">
+                                <input type="checkbox" onchange="toggleTarget('${target.agendaId}', '${target.id}', 'dashboard')">
+                                <div>
+                                    <strong style="color: #1e293b; display: block; font-size: 0.95rem;">${target.name}</strong>
+                                    <span style="font-size: 0.8rem; color: #64748b;">📁 ${target.agendaName}</span>
+                                </div>
+                            </div>
+                            <span style="background: #ffe4e6; color: #e11d48; font-size: 0.78rem; font-weight: 600; padding: 4px 10px; border-radius: 20px;">
+                                Terlewat: ${formatDate(target.deadline)}${timeDisplay}
+                            </span>
+                        </div>
+                        `;
+                    }).join('')}
+                </div>
+            </div>
+        `;
     }
+
+    const progressPercent = totalTargets > 0 ? Math.round((completedCount / totalTargets) * 100) : 0;
+
+    const statsHTML = `
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1.5rem; margin-bottom: 2rem;">
+            <div style="background: #fff; padding: 1.5rem; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.03);">
+                <span style="color: #64748b; font-size: 0.85rem;">Total Agenda Aktif</span>
+                <h2 style="margin: 0.5rem 0 0; color: #1e293b; font-size: 1.8rem;">${activeAgendas.length}</h2>
+            </div>
+            <div style="background: #fff; padding: 1.5rem; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.03);">
+                <span style="color: #64748b; font-size: 0.85rem;">Total Target</span>
+                <h2 style="margin: 0.5rem 0 0; color: #1e293b; font-size: 1.8rem;">${totalTargets}</h2>
+            </div>
+            <div style="background: #fff; padding: 1.5rem; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.03);">
+                <span style="color: #64748b; font-size: 0.85rem;">Target Selesai</span>
+                <h2 style="margin: 0.5rem 0 0; color: #217346; font-size: 1.8rem;">${completedCount}</h2>
+            </div>
+            <div style="background: #fff; padding: 1.5rem; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.03);">
+                <span style="color: #64748b; font-size: 0.85rem;">Progress Keseluruhan</span>
+                <h2 style="margin: 0.5rem 0 0; color: #2563eb; font-size: 1.8rem;">${progressPercent}%</h2>
+            </div>
+        </div>
+    `;
+
+    content.innerHTML = overdueHTML + statsHTML;
 }
 
-// --- TAMBAHAN: FITUR KELOLA ZONA MANUAL ---
-window.tambahZonaManual = async () => {
-    if (currentUserData.role !== "ADMIN") return alert("Akses Ditolak!");
-    
-    const namaZonaBaru = prompt("Masukkan Nama Zona Baru (Cth: Gedung Al-Azhar):");
-    if (!namaZonaBaru || !namaZonaBaru.trim()) return;
+// ================================
+// RENDER DAFTAR AGENDA 
+// ================================
+function renderAgendas() {
+    document.getElementById("pageTitle").innerText = "Semua Agenda";
+    document.getElementById("pageSubtitle").innerText = "Kelola agenda dan target pekerjaan Anda.";
+    const content = document.getElementById("content");
+    content.style.display = "grid"; 
+    content.innerHTML = "";
 
-    try {
-        let cleanName = namaZonaBaru.trim();
-        let generatedId = cleanName.toUpperCase().replace(/[^A-Z0-9]/g, '_');
-        let generatedKode = `QR_${generatedId}_${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
+    const activeAgendas = agendas.filter(a => !a.isArchived);
 
-        await setDoc(doc(db, "zones", generatedId), {
-            id: generatedId,
-            nama: cleanName,
-            kode: generatedKode
-        });
-
-        alert(`SUKSES: Zona "${cleanName}" berhasil ditambahkan!`);
-        renderManajemenZona();
-    } catch (error) {
-        alert("Gagal menambah zona: " + error.message);
+    if (activeAgendas.length === 0) {
+        content.innerHTML = `<div class="empty-state"><h2>Belum ada agenda aktif</h2><p>Tambahkan agenda pertama Anda.</p></div>`;
+        return;
     }
-};
 
-window.editZona = async (zoneDocId, namaLama) => {
-    if (currentUserData.role !== "ADMIN") return alert("Akses Ditolak!");
+    activeAgendas.forEach(agenda => {
+        const total = agenda.targets.length;
+        const completed = agenda.targets.filter(t => t.completed).length;
+        const priority = agenda.targets.filter(t => t.priority).length;
+        const progress = total === 0 ? 0 : Math.round((completed / total) * 100);
 
-    const namaBaru = prompt("Ubah Nama Zona:", namaLama);
-    if (namaBaru === null || !namaBaru.trim()) return;
+        const agendaCountdown = getCountdownText(agenda.date);
+        const isAgendaOverdue = agendaCountdown.includes("Terlewat");
 
-    try {
-        await updateDoc(doc(db, "zones", zoneDocId), {
-            nama: namaBaru.trim()
-        });
-        alert("SUKSES: Nama zona berhasil diperbarui.");
-        renderManajemenZona();
-    } catch (error) {
-        alert("Gagal mengedit zona: " + error.message);
-    }
-};
+        const pendingTargets = agenda.targets
+            .filter(t => !t.completed && t.deadline)
+            .sort((a, b) => new Date(a.deadline) - new Date(b.deadline))
+            .slice(0, 3); 
 
-window.hapusZona = async (zoneDocId, namaZona) => {
-    if (currentUserData.role !== "ADMIN") return alert("Akses Ditolak!");
-
-    if (confirm(`Peringatan: Yakin ingin menghapus zona "${namaZona}"?`)) {
-        try {
-            await deleteDoc(doc(db, "zones", zoneDocId));
-            alert(`Zona ${namaZona} berhasil dihapus.`);
-            renderManajemenZona();
-        } catch (error) {
-            alert("Gagal menghapus zona: " + error.message);
-        }
-    }
-};
-
-// --- 1. LOGIN SYSTEM & HAK AKSES ---
-async function checkLoginStatus() {
-    const loggedInUser = sessionStorage.getItem("mockUser");
-    if (loggedInUser) {
-        currentUserData = JSON.parse(loggedInUser);
-        
-        const loginSec = document.getElementById("login-section");
-        loginSec.classList.remove("active");
-        loginSec.classList.add("hidden");
-        loginSec.style.setProperty("display", "none", "important"); 
-
-        const appSec = document.getElementById("app-section");
-        appSec.classList.remove("hidden");
-        appSec.style.setProperty("display", "block", "important");
-
-        document.getElementById("user-name-display").innerText = currentUserData.nama;
-        document.getElementById("welcome-name").innerText = currentUserData.nama;
-
-        if (currentUserData.role === "ADMIN") {
-            document.querySelectorAll(".admin-only").forEach(el => { el.classList.remove("hidden"); el.style.display = ""; });
-            
-            if (currentUserData.email === "zhelaal.one@gmail.com") {
-                document.querySelectorAll(".super-admin-only").forEach(el => { el.classList.remove("hidden"); el.style.display = ""; });
-            } else {
-                document.querySelectorAll(".super-admin-only").forEach(el => { el.classList.add("hidden"); el.style.display = "none"; });
-            }
-            renderTabelGuru();
-            renderManajemenZona();
+        let miniTargetHTML = "";
+        if (pendingTargets.length > 0) {
+            miniTargetHTML = `
+                <div class="mini-target-list">
+                    <p style="font-size:0.75rem; color:#9094A6; margin-bottom:0.2rem; font-weight:600; text-transform:uppercase;">⏳ Target Terdekat:</p>
+                    ${pendingTargets.map(t => {
+                        const tCountdown = getCountdownText(t.deadline);
+                        const isTOverdue = tCountdown.includes("Terlewat");
+                        const timeDisplay = t.time ? ` (${t.time})` : "";
+                        
+                        return `
+                        <div class="mini-target-item">
+                            <span class="mini-target-name" title="${t.name}">${t.priority ? '⭐ ' : ''}${t.name}${timeDisplay}</span>
+                            <span class="mini-target-cd ${isTOverdue ? 'overdue' : ''}">${tCountdown}</span>
+                        </div>
+                        `;
+                    }).join("")}
+                </div>`;
+        } else if (total > 0 && progress === 100) {
+            miniTargetHTML = `<div class="mini-target-list" style="text-align:center; background: #f0fdf4; color: #166534; border-color: #bbf7d0;">🎉 Semua target selesai!</div>`;
         } else {
-            document.querySelectorAll(".admin-only, .super-admin-only").forEach(el => { el.classList.add("hidden"); el.style.display = "none"; });
+            miniTargetHTML = `<div class="mini-target-list" style="text-align:center; color: #9094A6; font-style: italic;">Belum ada target untuk dikerjakan.</div>`;
         }
+
+        const card = document.createElement("div");
+        card.className = "agenda-card";
+        card.innerHTML = `
+            <div class="agenda-card-header">
+                <div style="width: 100%;">
+                    <div style="display:flex; justify-content:space-between; align-items:flex-start;">
+                        <h2 style="margin-right:10px;">${agenda.name}</h2>
+                        
+                        <div style="display: flex; gap: 0.5rem; align-items:flex-start; flex-shrink:0;">
+                            <button class="edit-btn" onclick="openEditAgenda(event, '${agenda.id}')" style="background:#FFF0E5; color:#FF6B35; border:none; width:32px; height:32px; border-radius:8px; cursor:pointer; display:flex; align-items:center; justify-content:center;" title="Edit">✏️</button>
+                            <button onclick="toggleArchive(event, '${agenda.id}')" style="background:#EBF5FF; color:#3B82F6; border:none; width:32px; height:32px; border-radius:8px; cursor:pointer; display:flex; align-items:center; justify-content:center;" title="Arsipkan">📦</button>
+                            <button class="delete-btn" onclick="deleteAgenda(event, '${agenda.id}')" style="width:32px; height:32px; border-radius:8px; display:flex; align-items:center; justify-content:center;" title="Hapus">🗑</button>
+                        </div>
+                    </div>
+                    
+                    <div style="display:flex; align-items:center; gap: 10px; margin: 0.5rem 0;">
+                        <span class="countdown-badge ${isAgendaOverdue ? 'overdue' : ''}">
+                            ⏱️ ${agendaCountdown}
+                        </span>
+                        <span style="font-size:0.8rem; color:#9094A6;">(${formatDate(agenda.date)})</span>
+                    </div>
+                    
+                    <p>${agenda.description || "Tidak ada deskripsi"}</p>
+                </div>
+            </div>
+            
+            ${miniTargetHTML}
+
+            <div class="agenda-info" style="margin-top:auto;">
+                <span>${total} Target</span>
+                <span>⭐ ${priority} Prioritas</span>
+            </div>
+            <div class="progress"><div class="progress-bar" style="width:${progress}%"></div></div>
+            <div class="agenda-footer">
+                <span>${progress}% selesai</span>
+                <button onclick="openAgenda('${agenda.id}')">Buka Agenda →</button>
+            </div>
+        `;
+        content.appendChild(card);
+    });
+}
+
+// ================================
+// OPEN DETAIL AGENDA (CALENDAR WIDGET & CSS)
+// ================================
+function openAgenda(id) {
+    currentAgendaId = id;
+    const agenda = agendas.find(item => item.id === id);
+    if (!agenda) return;
+
+    currentCalMonth = new Date().getMonth();
+    currentCalYear = new Date().getFullYear();
+    selectedFilterDate = null;
+
+    document.getElementById("pageTitle").innerText = agenda.name;
+    document.getElementById("pageSubtitle").innerText = "Hari H: " + formatDate(agenda.date);
+    
+    const content = document.getElementById("content");
+    content.style.display = "block";
+    
+    // Injecting CSS Directly for the Calendar UI to look like a neat boxed calendar
+    const calendarCSS = `
+    <style>
+        .agenda-detail-layout { display: flex; flex-wrap: wrap; gap: 2rem; align-items: flex-start; }
+        .calendar-widget { 
+            flex: 1; min-width: 320px; max-width: 420px;
+            background: #ffffff; border-radius: 12px; padding: 1.5rem; 
+            box-shadow: 0 4px 20px rgba(0,0,0,0.05); border: 2px solid #F1F5F9; 
+        }
+        .cal-header { 
+            display: flex; justify-content: space-between; align-items: center; 
+            background: #0F766E; color: #ffffff; padding: 1rem 1.5rem; 
+            border-radius: 8px; margin-bottom: 1.2rem; font-weight: 700; font-size: 1.1rem;
+            text-transform: uppercase; letter-spacing: 1px;
+        }
+        .cal-header button { 
+            background: rgba(255,255,255,0.2); border: none; color: white; 
+            border-radius: 6px; width: 32px; height: 32px; cursor: pointer; 
+            display: flex; align-items: center; justify-content: center; font-weight: bold; transition: 0.2s;
+        }
+        .cal-header button:hover { background: rgba(255,255,255,0.4); }
+        .cal-days { 
+            display: grid; grid-template-columns: repeat(7, 1fr); text-align: center; 
+            font-weight: 700; color: #475569; font-size: 0.85rem; margin-bottom: 0.5rem; 
+        }
+        .cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
+        .cal-date { 
+            aspect-ratio: 1; display: flex; flex-direction: column; justify-content: center; align-items: center; 
+            border-radius: 6px; font-size: 1rem; cursor: pointer; font-weight: 600;
+            background: #F8FAFC; border: 1px solid #E2E8F0; color: #1E293B; transition: all 0.2s;
+        }
+        .cal-date:hover:not(.empty) { background: #FFF0E5; border-color: #FF6B35; color: #FF6B35; }
+        .cal-date.empty { background: transparent; border-color: transparent; cursor: default; }
+        .cal-date.has-target { 
+            background: #FF6B35; color: white; border-color: #FF6B35; 
+            box-shadow: 0 4px 10px rgba(255,107,53,0.3); 
+        }
+        .cal-date.active { 
+            border: 2px solid #0F766E; background: #CCFBF1; color: #0F766E; transform: scale(1.05); 
+        }
+        .cal-indicator {
+            width: 6px; height: 6px; background: white; border-radius: 50%; margin-top: 4px;
+        }
+    </style>
+    `;
+
+    content.innerHTML = calendarCSS + `
+        <div class="back-button">
+            <button onclick="renderAgendas()">← Kembali ke Daftar Agenda</button>
+        </div>
+        <div class="detail-header">
+            <div>
+                <h1>${agenda.name}</h1>
+                <p>${agenda.description || "Tidak ada deskripsi"}</p>
+            </div>
+            <button class="btn-primary" onclick="openTargetModal('${agenda.id}')">+ Tambah Target</button>
+        </div>
         
-        listenToActiveSession(); 
-        window.navigate('dashboard');
-    } else {
-        const loginSec = document.getElementById("login-section");
-        loginSec.classList.remove("hidden");
-        loginSec.style.setProperty("display", "flex", "important");
+        <div class="agenda-detail-layout">
+            <div class="calendar-widget">
+                <div class="cal-header">
+                    <button onclick="changeCalMonth(-1)">❮</button>
+                    <span id="calMonthYear">Bulan Tahun</span>
+                    <button onclick="changeCalMonth(1)">❯</button>
+                </div>
+                <div class="cal-days">
+                    <div>Min</div><div>Sen</div><div>Sel</div><div>Rab</div><div>Kam</div><div>Jum</div><div>Sab</div>
+                </div>
+                <div class="cal-grid" id="calGrid"></div>
+                
+                <div style="margin-top: 1.5rem; display: flex; flex-direction: column; gap: 0.5rem;">
+                    <button onclick="clearDateFilter()" style="background: transparent; border: 1px dashed #E5E7EB; padding: 0.5rem 1rem; border-radius: 8px; font-size: 0.8rem; cursor: pointer; color: #9094A6; width: 100%; transition: 0.2s;">
+                        Tampilkan Semua Target
+                    </button>
+                    <button onclick="exportCalendarToExcel()" style="background: #217346; color: white; border: none; padding: 0.6rem 1rem; border-radius: 8px; font-size: 0.85rem; font-weight: 600; cursor: pointer; width: 100%; transition: 0.2s; box-shadow: 0 4px 10px rgba(33, 115, 70, 0.2);">
+                        📅 Cetak Kalender (Excel)
+                    </button>
+                </div>
+            </div>
+            
+            <div style="flex: 2; min-width: 320px;">
+                <h3 id="targetListTitle" style="margin-bottom: 1.2rem; color: #111; font-size: 1.2rem;">Semua Target</h3>
+                <div id="targetList"></div>
+            </div>
+        </div>
+    `;
+    
+    renderAgendaCalendar(agenda);
+    renderTargets(agenda);
+}
+
+// ================================
+// LOGIKA KALENDER DETAIL AGENDA
+// ================================
+function changeCalMonth(dir) {
+    currentCalMonth += dir;
+    if (currentCalMonth < 0) {
+        currentCalMonth = 11;
+        currentCalYear--;
+    } else if (currentCalMonth > 11) {
+        currentCalMonth = 0;
+        currentCalYear++;
+    }
+    const agenda = agendas.find(a => a.id === currentAgendaId);
+    renderAgendaCalendar(agenda);
+}
+
+function clearDateFilter() {
+    selectedFilterDate = null;
+    const agenda = agendas.find(a => a.id === currentAgendaId);
+    renderAgendaCalendar(agenda);
+    renderTargets(agenda);
+}
+
+function filterByDate(dateStr) {
+    selectedFilterDate = dateStr;
+    const agenda = agendas.find(a => a.id === currentAgendaId);
+    renderAgendaCalendar(agenda);
+    renderTargets(agenda);
+}
+
+function renderAgendaCalendar(agenda) {
+    const calMonthYear = document.getElementById("calMonthYear");
+    const calGrid = document.getElementById("calGrid");
+    if (!calMonthYear || !calGrid) return;
+
+    const months = ["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember"];
+    calMonthYear.innerText = `${months[currentCalMonth]} ${currentCalYear}`;
+
+    calGrid.innerHTML = "";
+
+    const firstDay = new Date(currentCalYear, currentCalMonth, 1).getDay();
+    const daysInMonth = new Date(currentCalYear, currentCalMonth + 1, 0).getDate();
+
+    const targetDates = {};
+    agenda.targets.forEach(t => {
+        if (t.deadline) targetDates[t.deadline] = true;
+    });
+
+    for (let i = 0; i < firstDay; i++) {
+        calGrid.innerHTML += `<div class="cal-date empty"></div>`;
+    }
+
+    for (let i = 1; i <= daysInMonth; i++) {
+        const dateStr = `${currentCalYear}-${String(currentCalMonth+1).padStart(2, '0')}-${String(i).padStart(2, '0')}`;
         
-        const appSec = document.getElementById("app-section");
-        appSec.classList.add("hidden");
-        appSec.style.setProperty("display", "none", "important");
+        let classes = "cal-date";
+        let innerHTML = `${i}`;
+
+        if (targetDates[dateStr]) {
+            classes += " has-target";
+            // Menambah titik kecil di dalam kotak sebagai penanda jika ada target
+            innerHTML += `<div class="cal-indicator"></div>`;
+        }
+        if (selectedFilterDate === dateStr) classes += " active";
+
+        calGrid.innerHTML += `<div class="${classes}" onclick="filterByDate('${dateStr}')">${innerHTML}</div>`;
     }
 }
 
-document.getElementById("login-form").addEventListener("submit", async (e) => {
-    e.preventDefault();
-    const email = document.getElementById("email").value.trim();
-    const password = document.getElementById("password").value;
-    const errorMsg = document.getElementById("login-error");
-    const btnSubmit = document.querySelector("button[type='submit']");
+// ================================
+// EXPORT EXCEL JADWAL (WARNA VIBRANT SEPERTI GAMBAR KALENDER)
+// ================================
+function exportCalendarToExcel() {
+    const agenda = agendas.find(a => a.id === currentAgendaId);
+    if (!agenda) return;
+
+    const months = ["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember"];
+    const monthName = months[currentCalMonth];
+    const year = currentCalYear;
+
+    let wsData = [
+        [`AGENDA: ${agenda.name.toUpperCase()}`], 
+        [`${monthName.toUpperCase()} ${year}`], // Baris Nama Bulan
+        ["Minggu", "Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu"] 
+    ];
+
+    const firstDay = new Date(year, currentCalMonth, 1).getDay(); 
+    const daysInMonth = new Date(year, currentCalMonth + 1, 0).getDate(); 
+
+    let currentWeek = [];
+
+    for (let i = 0; i < firstDay; i++) {
+        currentWeek.push("");
+    }
+
+    for (let day = 1; day <= daysInMonth; day++) {
+        const dateStr = `${year}-${String(currentCalMonth+1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+        const targetsToday = agenda.targets.filter(t => t.deadline === dateStr);
+        
+        let cellContent = `${day}`; 
+        if (targetsToday.length > 0) {
+            targetsToday.forEach(t => {
+                const timeStr = t.time ? ` (${t.time})` : "";
+                cellContent += `\n• ${t.name}${timeStr}`; 
+            });
+        }
+
+        currentWeek.push(cellContent);
+
+        if (currentWeek.length === 7) {
+            wsData.push(currentWeek);
+            currentWeek = [];
+        }
+    }
+
+    if (currentWeek.length > 0) {
+        while (currentWeek.length < 7) {
+            currentWeek.push("");
+        }
+        wsData.push(currentWeek);
+    }
+
+    const ws = XLSX.utils.aoa_to_sheet(wsData);
+
+    ws['!merges'] = [
+        { s: { r: 0, c: 0 }, e: { r: 0, c: 6 } }, 
+        { s: { r: 1, c: 0 }, e: { r: 1, c: 6 } }
+    ];
+
+    ws['!cols'] = Array(7).fill({ wch: 18 });
+
+    ws['!rows'] = [
+        { hpt: 30 }, // Baris Judul Agenda
+        { hpt: 35 }, // Baris Bulan & Tahun (Tinggi)
+        { hpt: 25 }  // Baris Nama Hari
+    ];
+    for(let i = 3; i < wsData.length; i++) {
+        ws['!rows'].push({ hpt: 90 }); // Kotak tanggal kalender
+    }
+
+    const borderStyle = {
+        top: { style: "medium", color: { rgb: "000000" } },
+        bottom: { style: "medium", color: { rgb: "000000" } },
+        left: { style: "medium", color: { rgb: "000000" } },
+        right: { style: "medium", color: { rgb: "000000" } }
+    };
+
+    for (let R = 0; R < wsData.length; ++R) {
+        for (let C = 0; C < 7; ++C) {
+            let cellAddress = XLSX.utils.encode_cell({r: R, c: C});
+            if (!ws[cellAddress]) ws[cellAddress] = { t: 's', v: '' }; 
+
+            if (R === 0) {
+                // Judul Agenda Utama (Putih/Polos)
+                ws[cellAddress].s = { font: { bold: true, sz: 14, color: { rgb: "2D3142" } }, alignment: { horizontal: "center", vertical: "center" } };
+            } else if (R === 1) {
+                // Blok Warna Solid untuk Nama Bulan (Seperti di gambar image_bacfd3.png)
+                ws[cellAddress].s = { font: { bold: true, sz: 14, color: { rgb: "FFFFFF" } }, fill: { fgColor: { rgb: "0F766E" } }, alignment: { horizontal: "center", vertical: "center" }, border: borderStyle };
+            } else if (R === 2) {
+                // Header Hari (Warna Gelap)
+                ws[cellAddress].s = { font: { bold: true, color: { rgb: "FFFFFF" } }, fill: { fgColor: { rgb: "2D3142" } }, alignment: { horizontal: "center", vertical: "center" }, border: borderStyle };
+            } else if (R > 2) {
+                // Kotak Tanggal (Border Tegas, Angka di kiri atas)
+                ws[cellAddress].s = { 
+                    alignment: { horizontal: "left", vertical: "top", wrapText: true }, 
+                    border: borderStyle,
+                    font: { sz: 10, color: { rgb: "2D3142" } } 
+                };
+            }
+        }
+    }
+
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Kalender Agenda");
+    XLSX.writeFile(wb, `Kalender_${agenda.name.replace(/\s+/g, '_')}_${monthName}.xlsx`);
+}
+
+// ================================
+// RENDER TARGET (MENDUKUNG FILTER KALENDER)
+// ================================
+function renderTargets(agenda) {
+    const list = document.getElementById("targetList");
+    const title = document.getElementById("targetListTitle");
+    if (!list) return;
+    list.innerHTML = "";
+
+    let filteredTargets = agenda.targets;
+    if (selectedFilterDate) {
+        filteredTargets = agenda.targets.filter(t => t.deadline === selectedFilterDate);
+        title.innerHTML = `Target untuk: <span style="color:#FF6B35;">${formatDate(selectedFilterDate)}</span>`;
+    } else {
+        title.innerText = "Semua Target";
+        filteredTargets.sort((a, b) => new Date(a.deadline) - new Date(b.deadline));
+    }
+
+    if (filteredTargets.length === 0) {
+        list.innerHTML = `<div class="empty-state"><h3>Kosong</h3><p>Tidak ada target di tanggal ini.</p></div>`;
+        return;
+    }
+
+    filteredTargets.forEach(target => {
+        const item = document.createElement("div");
+        item.className = "target-item";
+        item.innerHTML = `
+            <div class="target-left">
+                <input type="checkbox" ${target.completed ? "checked" : ""} onchange="toggleTarget('${agenda.id}', '${target.id}')">
+                <div>
+                    <h3 class="${target.completed ? "completed" : ""}">${target.name}</h3>
+                    <p>Deadline: ${formatDate(target.deadline)} ${target.time ? '— ⏰ ' + target.time : ''}</p>
+                </div>
+            </div>
+            <div class="target-right">
+                ${target.priority ? `<span class="priority-badge">⭐ Prioritas</span>` : `<button class="priority-btn" onclick="togglePriority('${agenda.id}', '${target.id}')">☆ Prioritas</button>`}
+                <div style="display:flex; gap:0.5rem;">
+                    <button onclick="openEditTarget('${agenda.id}', '${target.id}')" style="background:#FFF0E5; color:#FF6B35; border:none; width:36px; height:36px; border-radius:10px; cursor:pointer;">✏️</button>
+                    <button onclick="deleteTarget('${agenda.id}', '${target.id}')" style="background:#FFF0F0; color:#FF4D4D; border:none; width:36px; height:36px; border-radius:10px; cursor:pointer;">🗑</button>
+                </div>
+            </div>
+        `;
+        list.appendChild(item);
+    });
+}
+
+// ================================
+// LOGIKA FILTER REKAP TARGET
+// ================================
+function applySpecialFilter(type) {
+    const sortEl = document.getElementById("specialSortOrder");
+    if (sortEl) specialSortOrder = sortEl.value;
     
-    btnSubmit.innerText = "Memeriksa ke Cloud...";
-    btnSubmit.disabled = true;
-    errorMsg.innerText = ""; // Bersihkan pesan error sebelumnya
+    const dateEl = document.getElementById("specialFilterDate");
+    if (dateEl) specialFilterDate = dateEl.value;
+    
+    const statusEl = document.getElementById("specialFilterStatus");
+    if (statusEl) specialFilterStatus = statusEl.value;
+    
+    const priorityEl = document.getElementById("specialFilterPriority");
+    if (priorityEl) specialFilterPriority = priorityEl.value;
+    
+    renderSpecialPage(type);
+}
 
-    try {
-        // 1. Cek apakah yang login adalah Super Admin
-        if (email === "zhelaal.one@gmail.com") {
-            if (password === "2026") {
-                const userData = { uid: "ADM-SUPER", nama: "Zhela (Super Admin)", email: email, role: "ADMIN" };
-                sessionStorage.setItem("mockUser", JSON.stringify(userData));
-                checkLoginStatus(); 
-                btnSubmit.innerText = "Masuk ke Sistem"; btnSubmit.disabled = false;
-                return;
-            } else {
-                errorMsg.innerText = "Password salah!";
-                btnSubmit.innerText = "Masuk ke Sistem"; btnSubmit.disabled = false;
-                return;
-            }
-        }
+function resetSpecialFilter(type) {
+    specialSortOrder = 'asc';
+    specialFilterDate = '';
+    specialFilterStatus = 'all';
+    specialFilterPriority = 'all';
+    renderSpecialPage(type);
+}
 
-        // 2. Cek apakah yang login adalah Admin Staff
-        const qAdmin = query(collection(db, "admins"), where("email", "==", email));
-        const adminSnap = await getDocs(qAdmin);
-        
-        if (!adminSnap.empty) {
-            const adminData = adminSnap.docs[0].data();
-            // Jika field password ada di database, gunakan itu. Jika belum ada, gunakan 2026
-            const adminPass = adminData.password || "2026"; 
-            
-            if (password === adminPass) {
-                const userData = { uid: "ADM-STAFF", nama: adminData.nama || "Admin Staff", email: email, role: "ADMIN" };
-                sessionStorage.setItem("mockUser", JSON.stringify(userData));
-                checkLoginStatus(); 
-            } else {
-                errorMsg.innerText = "Password salah!";
-            }
-            btnSubmit.innerText = "Masuk ke Sistem"; btnSubmit.disabled = false;
-            return;
-        }
-
-        // 3. Cek apakah yang login adalah Guru
-        const qGuru = query(collection(db, "guru"), where("Email", "==", email));
-        const guruSnap = await getDocs(qGuru);
-        
-        if (!guruSnap.empty) {
-            if (password === "123456") {
-                const foundGuru = guruSnap.docs[0].data();
-                const userData = { uid: foundGuru.Barcode, nama: foundGuru.Nama, email: foundGuru.Email, zona: foundGuru.Zona, role: "GURU" };
-                sessionStorage.setItem("mockUser", JSON.stringify(userData));
-                checkLoginStatus(); 
-            } else {
-                errorMsg.innerText = "Password salah!";
-            }
-            btnSubmit.innerText = "Masuk ke Sistem"; btnSubmit.disabled = false;
-            return;
-        } 
-        
-        // Jika tidak terdaftar sama sekali
-        errorMsg.innerText = "Email belum terdaftar di Cloud.";
-
-    } catch (error) { 
-        errorMsg.innerText = "Gagal terhubung ke server: " + error.message; 
+// ================================
+// HALAMAN REKAP TARGET (DENGAN FILTER LENGKAP)
+// ================================
+function renderSpecialPage(type) {
+    let title = "";
+    let subtitle = "";
+    
+    if (type === 'priority') {
+        title = "Target Prioritas";
+        subtitle = "Fokus pada target paling penting.";
+    } else if (type === 'completed') {
+        title = "Target Selesai";
+        subtitle = "Pekerjaan yang telah Anda selesaikan.";
+    } else if (type === 'all-targets') {
+        title = "Semua Target";
+        subtitle = "Rekap seluruh target dari semua agenda, diurutkan dari deadline terdekat.";
     }
     
-    btnSubmit.innerText = "Masuk ke Sistem"; btnSubmit.disabled = false;
+    document.getElementById("pageTitle").innerText = title;
+    document.getElementById("pageSubtitle").innerText = subtitle;
+    
+    const content = document.getElementById("content");
+    content.style.display = "block";
+    
+    // 1. GENERATE EXTRA FILTERS (Hanya muncul khusus di tab 'Semua Target')
+    let extraFilters = "";
+    if (type === 'all-targets') {
+        extraFilters = `
+            <select id="specialFilterStatus" onchange="applySpecialFilter('${type}')" style="padding: 0.6rem; border-radius: 8px; border: 1px solid #E5E7EB; color: #2D3142; cursor: pointer;">
+                <option value="all" ${specialFilterStatus === 'all' ? 'selected' : ''}>Semua Status</option>
+                <option value="pending" ${specialFilterStatus === 'pending' ? 'selected' : ''}>⏳ Belum Selesai</option>
+                <option value="completed" ${specialFilterStatus === 'completed' ? 'selected' : ''}>✅ Selesai</option>
+            </select>
+            
+            <select id="specialFilterPriority" onchange="applySpecialFilter('${type}')" style="padding: 0.6rem; border-radius: 8px; border: 1px solid #E5E7EB; color: #2D3142; cursor: pointer;">
+                <option value="all" ${specialFilterPriority === 'all' ? 'selected' : ''}>Semua Prioritas</option>
+                <option value="priority" ${specialFilterPriority === 'priority' ? 'selected' : ''}>⭐ Prioritas</option>
+                <option value="normal" ${specialFilterPriority === 'normal' ? 'selected' : ''}>Biasa</option>
+            </select>
+        `;
+    }
+
+    // 2. TOMBOL RESET (Hanya muncul jika filter aktif)
+    let isFilterActive = (specialFilterDate !== '' || specialFilterStatus !== 'all' || specialFilterPriority !== 'all');
+    let resetBtn = isFilterActive ? `<button onclick="resetSpecialFilter('${type}')" style="background: none; border: none; color: #FF4D4D; cursor: pointer; font-weight: 600; font-size: 0.9rem;">✖ Reset</button>` : '';
+
+    // 3. PANEL AKSI & FILTER
+    let actionPanel = `
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem; flex-wrap: wrap; gap: 1rem;">
+            <div style="display: flex; gap: 0.8rem; align-items: center; flex-wrap: wrap;">
+                <input type="date" id="specialFilterDate" value="${specialFilterDate}" onchange="applySpecialFilter('${type}')" style="padding: 0.6rem; border-radius: 8px; border: 1px solid #E5E7EB; color: #2D3142;">
+                
+                <select id="specialSortOrder" onchange="applySpecialFilter('${type}')" style="padding: 0.6rem; border-radius: 8px; border: 1px solid #E5E7EB; color: #2D3142; cursor: pointer;">
+                    <option value="asc" ${specialSortOrder === 'asc' ? 'selected' : ''}>🔽 Terdekat</option>
+                    <option value="desc" ${specialSortOrder === 'desc' ? 'selected' : ''}>🔼 Terlama</option>
+                </select>
+                
+                ${extraFilters}
+                ${resetBtn}
+            </div>
+            
+            <button class="btn-primary" onclick="exportFilteredTargetsToExcel('${type}')" style="background-color: #217346; box-shadow: 0 6px 20px rgba(33, 115, 70, 0.3);">
+                📊 Export Excel
+            </button>
+        </div>
+    `;
+
+    content.innerHTML = actionPanel + `<div class="target-list-page" style="display:flex; flex-direction:column; gap:1rem;"></div>`;
+    const container = content.querySelector(".target-list-page");
+    
+    let filteredTargets = [];
+
+    agendas.filter(a => !a.isArchived).forEach(agenda => {
+        agenda.targets.forEach(target => {
+            if (type === 'priority' && target.priority && !target.completed) {
+                filteredTargets.push({...target, agendaName: agenda.name, agendaId: agenda.id});
+            } else if (type === 'completed' && target.completed) {
+                filteredTargets.push({...target, agendaName: agenda.name, agendaId: agenda.id});
+            } else if (type === 'all-targets') {
+                filteredTargets.push({...target, agendaName: agenda.name, agendaId: agenda.id});
+            }
+        });
+    });
+
+    // 4. TERAPKAN FILTER STATUS & PRIORITAS (Khusus tab Semua Target)
+    if (type === 'all-targets') {
+        if (specialFilterStatus === 'completed') {
+            filteredTargets = filteredTargets.filter(t => t.completed);
+        } else if (specialFilterStatus === 'pending') {
+            filteredTargets = filteredTargets.filter(t => !t.completed);
+        }
+        
+        if (specialFilterPriority === 'priority') {
+            filteredTargets = filteredTargets.filter(t => t.priority);
+        } else if (specialFilterPriority === 'normal') {
+            filteredTargets = filteredTargets.filter(t => !t.priority);
+        }
+    }
+
+    // 5. TERAPKAN FILTER TANGGAL
+    if (specialFilterDate) {
+        filteredTargets = filteredTargets.filter(t => t.deadline === specialFilterDate);
+    }
+
+    // 6. TERAPKAN PENGURUTAN (SORTIR)
+    filteredTargets.sort((a, b) => {
+        const dateA = a.deadline ? new Date(a.deadline).getTime() : Infinity;
+        const dateB = b.deadline ? new Date(b.deadline).getTime() : Infinity;
+        return specialSortOrder === 'asc' ? dateA - dateB : dateB - dateA;
+    });
+
+    if (filteredTargets.length === 0) {
+        container.innerHTML = `<div class="empty-state"><h2>Belum ada target</h2><p>Tidak ada data untuk ditampilkan pada filter ini.</p></div>`;
+        return;
+    }
+
+    filteredTargets.forEach(target => {
+        const timeDisplay = target.time ? ` — ⏰ ${target.time}` : "";
+
+        container.innerHTML += `
+            <div class="target-item">
+                <div class="target-left">
+                    <input type="checkbox" ${target.completed ? "checked" : ""} onchange="toggleTarget('${target.agendaId}', '${target.id}', '${type}')">
+                    <div>
+                        <h3 class="${target.completed ? "completed" : ""}">${target.name}</h3>
+                        <p>📁 ${target.agendaName} | Deadline: ${formatDate(target.deadline)}${timeDisplay}</p>
+                    </div>
+                </div>
+                <div class="target-right">
+                    ${target.priority ? `<span class="priority-badge">⭐ Prioritas</span>` : ''}
+                </div>
+            </div>
+        `;
+    });
+}
+
+// ================================
+// HALAMAN REKAP TARGET (DENGAN FILTER & SORTIR)
+// ================================
+function renderSpecialPage(type) {
+    let title = "";
+    let subtitle = "";
+    
+    if (type === 'priority') {
+        title = "Target Prioritas";
+        subtitle = "Fokus pada target paling penting.";
+    } else if (type === 'completed') {
+        title = "Target Selesai";
+        subtitle = "Pekerjaan yang telah Anda selesaikan.";
+    } else if (type === 'all-targets') {
+        title = "Semua Target";
+        subtitle = "Rekap seluruh target dari semua agenda.";
+    }
+    
+    document.getElementById("pageTitle").innerText = title;
+    document.getElementById("pageSubtitle").innerText = subtitle;
+    
+    const content = document.getElementById("content");
+    content.style.display = "block";
+    
+    // UI Filter dan Sortir
+    let filterUI = `
+        <div style="display: flex; gap: 0.8rem; align-items: center; flex-wrap: wrap;">
+            <input type="date" id="specialFilterDate" value="${specialFilterDate}" onchange="applySpecialFilter('${type}')" style="padding: 0.6rem; border-radius: 8px; border: 1px solid #E5E7EB; color: #2D3142;">
+            
+            <select id="specialSortOrder" onchange="applySpecialFilter('${type}')" style="padding: 0.6rem; border-radius: 8px; border: 1px solid #E5E7EB; color: #2D3142; cursor: pointer;">
+                <option value="asc" ${specialSortOrder === 'asc' ? 'selected' : ''}>🔽 Terdekat</option>
+                <option value="desc" ${specialSortOrder === 'desc' ? 'selected' : ''}>🔼 Terlama</option>
+            </select>
+            
+            ${specialFilterDate ? `<button onclick="resetSpecialFilter('${type}')" style="background: none; border: none; color: #FF4D4D; cursor: pointer; font-weight: 600; font-size: 0.9rem;">✖ Reset Filter</button>` : ''}
+        </div>
+    `;
+
+    let actionPanel = `
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem; flex-wrap: wrap; gap: 1rem;">
+            ${filterUI}
+            <button class="btn-primary" onclick="exportFilteredTargetsToExcel('${type}')" style="background-color: #217346; box-shadow: 0 6px 20px rgba(33, 115, 70, 0.3);">
+                📊 Export Excel
+            </button>
+        </div>
+    `;
+
+    content.innerHTML = actionPanel + `<div class="target-list-page" style="display:flex; flex-direction:column; gap:1rem;"></div>`;
+    const container = content.querySelector(".target-list-page");
+    
+    let filteredTargets = [];
+
+    // Mengumpulkan target yang BELUM DIARSIP berdasarkan tab yang dibuka
+    agendas.filter(a => !a.isArchived).forEach(agenda => {
+        agenda.targets.forEach(target => {
+            if (type === 'priority' && target.priority && !target.completed) {
+                filteredTargets.push({...target, agendaName: agenda.name, agendaId: agenda.id});
+            } else if (type === 'completed' && target.completed) {
+                filteredTargets.push({...target, agendaName: agenda.name, agendaId: agenda.id});
+            } else if (type === 'all-targets') {
+                filteredTargets.push({...target, agendaName: agenda.name, agendaId: agenda.id});
+            }
+        });
+    });
+
+    // 1. Terapkan Filter Tanggal (Jika Anda memilih tanggal dari kalender filter)
+    if (specialFilterDate) {
+        filteredTargets = filteredTargets.filter(t => t.deadline === specialFilterDate);
+    }
+
+    // 2. Terapkan Sortir Urutan (Terdekat / Terlama)
+    filteredTargets.sort((a, b) => {
+        const dateA = a.deadline ? new Date(a.deadline).getTime() : Infinity;
+        const dateB = b.deadline ? new Date(b.deadline).getTime() : Infinity;
+        return specialSortOrder === 'asc' ? dateA - dateB : dateB - dateA;
+    });
+
+    if (filteredTargets.length === 0) {
+        container.innerHTML = `<div class="empty-state"><h2>Tidak ada data</h2><p>Data target tidak ditemukan atau tidak ada jadwal di tanggal ini.</p></div>`;
+        return;
+    }
+
+    filteredTargets.forEach(target => {
+        const timeDisplay = target.time ? ` — ⏰ ${target.time}` : "";
+
+        container.innerHTML += `
+            <div class="target-item">
+                <div class="target-left">
+                    <input type="checkbox" ${target.completed ? "checked" : ""} onchange="toggleTarget('${target.agendaId}', '${target.id}', '${type}')">
+                    <div>
+                        <h3 class="${target.completed ? "completed" : ""}">${target.name}</h3>
+                        <p>📁 ${target.agendaName} | Deadline: ${formatDate(target.deadline)}${timeDisplay}</p>
+                    </div>
+                </div>
+                <div class="target-right">
+                    ${target.priority ? `<span class="priority-badge">⭐ Prioritas</span>` : ''}
+                </div>
+            </div>
+        `;
+    });
+}
+
+// ================================
+// EXPORT EXCEL SEMUA TARGET (SINKRON DENGAN SEMUA FILTER)
+// ================================
+function exportFilteredTargetsToExcel(type) {
+    let filteredTargets = [];
+    let judulExcel = "";
+
+    agendas.filter(a => !a.isArchived).forEach(agenda => {
+        agenda.targets.forEach(target => {
+            if (type === 'priority' && target.priority && !target.completed) {
+                filteredTargets.push({...target, agendaName: agenda.name});
+            } else if (type === 'completed' && target.completed) {
+                filteredTargets.push({...target, agendaName: agenda.name});
+            } else if (type === 'all-targets') {
+                filteredTargets.push({...target, agendaName: agenda.name});
+            }
+        });
+    });
+
+    // Terapkan Filter Status dan Prioritas (hanya untuk All Targets)
+    if (type === 'all-targets') {
+        if (specialFilterStatus === 'completed') filteredTargets = filteredTargets.filter(t => t.completed);
+        else if (specialFilterStatus === 'pending') filteredTargets = filteredTargets.filter(t => !t.completed);
+        
+        if (specialFilterPriority === 'priority') filteredTargets = filteredTargets.filter(t => t.priority);
+        else if (specialFilterPriority === 'normal') filteredTargets = filteredTargets.filter(t => !t.priority);
+    }
+
+    // Terapkan Filter Tanggal
+    if (specialFilterDate) {
+        filteredTargets = filteredTargets.filter(t => t.deadline === specialFilterDate);
+    }
+
+    // Terapkan Sortir Urutan
+    filteredTargets.sort((a, b) => {
+        const dateA = a.deadline ? new Date(a.deadline).getTime() : Infinity;
+        const dateB = b.deadline ? new Date(b.deadline).getTime() : Infinity;
+        return specialSortOrder === 'asc' ? dateA - dateB : dateB - dateA;
+    });
+
+    if (filteredTargets.length === 0) {
+        alert("Tidak ada data target untuk diekspor pada filter ini.");
+        return;
+    }
+
+    if (type === 'priority') judulExcel = "REKAP TARGET PRIORITAS";
+    else if (type === 'completed') judulExcel = "REKAP TARGET SELESAI";
+    else judulExcel = "REKAP SEMUA TARGET";
+
+    if (specialFilterDate) judulExcel += ` (${formatDate(specialFilterDate)})`;
+
+    let wsData = [
+        [judulExcel], [], 
+        ["No", "Nama Agenda", "Target Pekerjaan", "Deadline", "Jam", "Prioritas", "Status"]
+    ];
+
+    filteredTargets.forEach((t, index) => {
+        wsData.push([
+            index + 1, t.agendaName, t.name, formatDate(t.deadline),
+            t.time ? t.time : "-", t.priority ? "⭐ Ya" : "-", t.completed ? "Selesai" : "Proses"
+        ]);
+    });
+
+    const ws = XLSX.utils.aoa_to_sheet(wsData);
+    ws['!merges'] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 6 } }];
+    ws['!cols'] = [{wch: 5}, {wch: 25}, {wch: 40}, {wch: 20}, {wch: 10}, {wch: 12}, {wch: 15}];
+    ws['!rows'] = [{hpt: 35}, {hpt: 15}]; 
+    for(let i = 2; i < wsData.length; i++) ws['!rows'].push({hpt: 25});
+
+    const borderStyle = {
+        top: { style: "thin", color: { auto: 1 } },
+        bottom: { style: "thin", color: { auto: 1 } },
+        left: { style: "thin", color: { auto: 1 } },
+        right: { style: "thin", color: { auto: 1 } }
+    };
+
+    for (let R = 0; R < wsData.length; ++R) {
+        for (let C = 0; C < 7; ++C) {
+            let cellAddress = XLSX.utils.encode_cell({r: R, c: C});
+            if (!ws[cellAddress]) ws[cellAddress] = { t: 's', v: '' };
+
+            if (R === 0) {
+                ws[cellAddress].s = { font: { bold: true, sz: 14, color: { rgb: "FF6B35" } }, alignment: { horizontal: "center", vertical: "center" } };
+            } else if (R === 2) {
+                ws[cellAddress].s = { font: { bold: true, color: { rgb: "FFFFFF" } }, fill: { fgColor: { rgb: "2D3142" } }, alignment: { horizontal: "center", vertical: "center" }, border: borderStyle };
+            } else if (R > 2) {
+                const isLeftAlign = (C === 1 || C === 2); 
+                ws[cellAddress].s = { alignment: { horizontal: isLeftAlign ? "left" : "center", vertical: "center", wrapText: true }, border: borderStyle };
+            }
+        }
+    }
+
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Rekap");
+    XLSX.writeFile(wb, `${judulExcel.replace(/\s+/g, '_')}.xlsx`);
+}
+
+
+// ================================
+// FORM SUMBITS & MODAL LOGIC
+// ================================
+document.getElementById("agendaForm").addEventListener("submit", function(e) {
+    e.preventDefault();
+    const id = document.getElementById("editAgendaId").value;
+    const name = document.getElementById("agendaName").value;
+    const date = document.getElementById("agendaDate").value;
+    const description = document.getElementById("agendaDescription").value;
+
+    if(id) {
+        const agenda = agendas.find(a => a.id === id);
+        agenda.name = name;
+        agenda.date = date;
+        agenda.description = description;
+    } else {
+        agendas.push({ id: Date.now().toString(), name, date, description, isArchived: false, targets: [] });
+    }
+
+    saveData();
+    closeAgendaModal();
+    renderAgendas(); 
+    
+    document.querySelectorAll(".nav-item").forEach(i => i.classList.remove("active"));
+    document.querySelector('[data-page="agenda"]').classList.add("active");
 });
 
-window.logout = () => { 
-    sessionStorage.removeItem("mockUser"); 
-    if(unsubscribeDashboard) unsubscribeDashboard();
-    if(unsubscribeSession) unsubscribeSession();
-    location.reload(); 
-};
-
-// --- 2. NAVIGASI ---
-window.navigate = (pageId) => {
-    if (currentUserData.role !== "ADMIN" && (pageId === "guru" || pageId === "zona" || pageId === "rekap" || pageId === "setting")) return;
-    if (pageId === "setting" && currentUserData.email !== "zhelaal.one@gmail.com") return alert("Akses Ditolak! Hanya Developer yang bisa membuka menu ini.");
-
-    document.querySelectorAll(".page").forEach(page => page.classList.add("hidden"));
-    const targetPage = document.getElementById(`page-${pageId}`);
-    if(targetPage) targetPage.classList.remove("hidden");
+document.getElementById("targetForm").addEventListener("submit", function(e) {
+    e.preventDefault();
+    const agendaId = document.getElementById("targetAgendaId").value;
+    const targetId = document.getElementById("editTargetId").value;
+    const agenda = agendas.find(a => a.id === agendaId);
     
-    // Hentikan kamera jika pindah halaman
-    if (pageId !== "scan" && typeof window.stopScanner === "function") {
-        window.stopScanner();
-    }
+    if (!agenda) return;
 
-    if (pageId === "scan") setupScannerUI();
-    if (pageId === "rekap" && currentUserData.role === "ADMIN") renderRekap();
-    if (pageId === "setting" && currentUserData.email === "zhelaal.one@gmail.com") renderDaftarAdmin();
-    if (pageId === "dashboard") initDashboardRealtime();
-    else if(unsubscribeDashboard) { unsubscribeDashboard(); unsubscribeDashboard = null; }
-};
+    const name = document.getElementById("targetName").value;
+    const deadline = document.getElementById("targetDeadline").value;
+    const time = document.getElementById("targetTime").value; 
+    const priority = document.getElementById("targetPriority").checked;
 
-async function setupScannerUI() {
-    if (!currentUserData) return;
-    const adminSelector = document.getElementById("admin-zone-selector");
-    const scanTitle = document.getElementById("scan-title");
-    const scanDesc = document.getElementById("scan-desc");
-    
-    if (currentUserData.role === "ADMIN") {
-        adminSelector.classList.remove("hidden");
-        scanTitle.innerText = "Scan Kartu Guru (Sistem 1)";
-        scanDesc.innerText = "Pilih zona tugas Anda, lalu scan Barcode/ID Card milik guru.";
-        
-        const select = document.getElementById("pic-zone-select");
-        const zonesSnap = await getDocs(collection(db, "zones"));
-        select.innerHTML = '<option value="">-- Pilih Zona Anda Bertugas --</option>';
-        zonesSnap.forEach(doc => { select.innerHTML += `<option value="${doc.data().id}">${doc.data().nama}</option>`; });
+    if(targetId) {
+        const target = agenda.targets.find(t => t.id === targetId);
+        target.name = name;
+        target.deadline = deadline;
+        target.time = time; 
+        target.priority = priority;
     } else {
-        adminSelector.classList.add("hidden");
-        scanTitle.innerText = "Scan QR Zona (Sistem 2)";
-        scanDesc.innerText = "Arahkan kamera ke QR Code yang terdapat di zona absensi Anda.";
+        agenda.targets.push({ id: Date.now().toString(), name, deadline, time, priority, completed: false });
+    }
+
+    saveData();
+    closeTargetModal();
+    openAgenda(agendaId);
+});
+
+function openEditAgenda(event, id) {
+    event.stopPropagation();
+    const a = agendas.find(a => a.id === id);
+    
+    document.getElementById("editAgendaId").value = a.id;
+    document.getElementById("agendaName").value = a.name;
+    document.getElementById("agendaDate").value = a.date || "";
+    document.getElementById("agendaDescription").value = a.description || "";
+    
+    document.getElementById("agendaModalTitle").innerText = "Edit Agenda";
+    document.getElementById("agendaModal").classList.remove("hidden");
+}
+
+function openEditTarget(agendaId, targetId) {
+    const a = agendas.find(a => a.id === agendaId);
+    const t = a.targets.find(t => t.id === targetId);
+
+    document.getElementById("editTargetId").value = t.id;
+    document.getElementById("targetAgendaId").value = a.id;
+    
+    document.getElementById("targetName").value = t.name;
+    document.getElementById("targetDeadline").value = t.deadline || "";
+    document.getElementById("targetTime").value = t.time || ""; 
+    document.getElementById("targetPriority").checked = t.priority;
+    
+    document.getElementById("targetModalTitle").innerText = "Edit Target";
+    document.getElementById("targetModal").classList.remove("hidden");
+}
+
+function openAgendaModal() {
+    document.getElementById("agendaForm").reset();
+    document.getElementById("editAgendaId").value = "";
+    document.getElementById("agendaModalTitle").innerText = "Tambah Agenda";
+    document.getElementById("agendaModal").classList.remove("hidden");
+}
+function closeAgendaModal() {
+    document.getElementById("agendaModal").classList.add("hidden");
+}
+
+function openTargetModal(agendaId) {
+    document.getElementById("targetForm").reset();
+    document.getElementById("editTargetId").value = "";
+    document.getElementById("targetAgendaId").value = agendaId || currentAgendaId;
+    document.getElementById("targetTime").value = ""; 
+    document.getElementById("targetModalTitle").innerText = "Tambah Target";
+    document.getElementById("targetModal").classList.remove("hidden");
+}
+
+function closeTargetModal() {
+    document.getElementById("targetModal").classList.add("hidden");
+}
+
+function toggleTarget(agendaId, targetId, currentView = 'agenda') {
+    const agenda = agendas.find(a => a.id === agendaId);
+    const target = agenda.targets.find(t => t.id === targetId);
+    target.completed = !target.completed;
+    saveData();
+    
+    if (currentView === 'dashboard') {
+        renderDashboard();
+    } else if (['priority', 'completed', 'all-targets'].includes(currentView)) {
+        renderSpecialPage(currentView);
+    } else {
+        openAgenda(agendaId);
     }
 }
 
-// --- 3. FITUR TAMBAH, EDIT, & HAPUS ADMIN ---
-window.tambahAdmin = async () => {
-    if (currentUserData.email !== "zhelaal.one@gmail.com") return alert("Akses Ditolak!");
-    
-    const namaBaru = document.getElementById("input-new-admin-nama").value.trim();
-    const emailBaru = document.getElementById("input-new-admin").value.trim();
-    
-    if(!namaBaru || !emailBaru) return alert("Nama dan Email tidak boleh kosong!");
-    if(emailBaru === "zhelaal.one@gmail.com") return alert("Email ini otomatis sudah menjadi Super Admin!");
-
-    document.querySelector("#page-setting .btn-primary").innerText = "Menyimpan...";
-    try {
-        const q = query(collection(db, "admins"), where("email", "==", emailBaru));
-        const snap = await getDocs(q);
-        if(!snap.empty) {
-            document.querySelector("#page-setting .btn-primary").innerText = "Tambah Admin";
-            return alert("Gagal: Email ini sudah terdaftar sebagai Admin!");
-        }
-
-        await addDoc(collection(db, "admins"), { nama: namaBaru, email: emailBaru, role: "ADMIN", timestamp: new Date() });
-        alert(`SUKSES! Admin ${namaBaru} (${emailBaru}) berhasil ditambahkan.`);
-        
-        document.getElementById("input-new-admin-nama").value = "";
-        document.getElementById("input-new-admin").value = "";
-        renderDaftarAdmin(); 
-    } catch (error) { alert("Gagal menambah admin: " + error.message); }
-    document.querySelector("#page-setting .btn-primary").innerText = "Tambah Admin";
-};
-
-window.hapusAdmin = async (id, nama) => {
-    if (currentUserData.email !== "zhelaal.one@gmail.com") return alert("Akses Ditolak!");
-    if (confirm(`Peringatan: Yakin ingin MENGHAPUS akses admin untuk "${nama}"?`)) {
-        try {
-            await deleteDoc(doc(db, "admins", id));
-            alert(`Akses admin untuk ${nama} berhasil dicabut.`);
-            renderDaftarAdmin(); 
-        } catch (error) { alert("Gagal menghapus admin: " + error.message); }
-    }
-};
-
-window.editAdmin = async (id, namaLama, emailLama) => {
-    if (currentUserData.email !== "zhelaal.one@gmail.com") return alert("Akses Ditolak!");
-    
-    const namaBaru = prompt("Ubah Nama Admin:", namaLama);
-    if (namaBaru === null) return; 
-    
-    const emailBaru = prompt("Ubah Email Akses Admin:", emailLama);
-    if (emailBaru === null) return; 
-
-    if (!namaBaru.trim() || !emailBaru.trim()) return alert("Nama dan Email tidak boleh kosong!");
-
-    try {
-        if (emailBaru.trim() !== emailLama) {
-            const q = query(collection(db, "admins"), where("email", "==", emailBaru.trim()));
-            const snap = await getDocs(q);
-            if (!snap.empty) return alert("Gagal: Email yang baru Anda masukkan sudah dipakai oleh admin lain!");
-        }
-        await updateDoc(doc(db, "admins", id), { nama: namaBaru.trim(), email: emailBaru.trim() });
-        alert(`SUKSES: Data admin berhasil diperbarui.`);
-        renderDaftarAdmin(); 
-    } catch (error) { alert("Gagal mengedit admin: " + error.message); }
-};
-
-window.gantiPasswordAdmin = async (id, nama) => {
-    if (currentUserData.email !== "zhelaal.one@gmail.com") return alert("Akses Ditolak! Hanya Super Admin yang bisa mengubah password.");
-    
-    const passwordBaru = prompt(`Masukkan password baru untuk Admin "${nama}":\n(Minimal 4 karakter)`);
-    if (passwordBaru === null) return; 
-    
-    if (passwordBaru.trim().length < 4) {
-        return alert("GAGAL: Password terlalu pendek! Minimal 4 karakter.");
-    }
-
-    try {
-        await updateDoc(doc(db, "admins", id), { 
-            password: passwordBaru.trim() 
-        });
-        alert(`SUKSES: Password untuk Admin ${nama} berhasil diubah.`);
-    } catch (error) { 
-        alert("Gagal mengubah password admin: " + error.message); 
-    }
-};
-
-async function renderDaftarAdmin() {
-    const tbody = document.getElementById("body-daftar-admin");
-    tbody.innerHTML = `<tr>
-        <td style="padding: 10px;"><strong>Zhela (Super Admin)</strong></td>
-        <td style="padding: 10px;">zhelaal.one@gmail.com</td>
-        <td style="padding: 10px;"><span class="badge badge-tepat" style="background:#4f46e5; color:#fff;">Developer</span></td>
-        <td style="padding: 10px;"><span style="color:#9ca3af; font-size:0.8rem; font-style:italic;">Akses Mutlak</span></td>
-    </tr>`;
-    
-    try {
-        const snap = await getDocs(collection(db, "admins"));
-        snap.forEach(doc => {
-            let data = doc.data();
-            let adminId = doc.id; 
-            tbody.innerHTML += `<tr>
-                <td style="padding: 10px;"><strong>${data.nama || "Admin Staff"}</strong></td>
-                <td style="padding: 10px;">${data.email}</td>
-                <td style="padding: 10px;"><span class="badge" style="background:#eef2ff; color:#4f46e5;">Admin Staff</span></td>
-                <td style="padding: 10px; display: flex; flex-wrap: wrap; gap: 5px;">
-                    <button onclick="editAdmin('${adminId}', '${data.nama}', '${data.email}')" style="background:#f59e0b; color:#fff; border:none; padding:5px 10px; border-radius:6px; cursor:pointer; font-size:0.75rem;">Edit</button>
-                    <button onclick="gantiPasswordAdmin('${adminId}', '${data.nama}')" style="background:#10b981; color:#fff; border:none; padding:5px 10px; border-radius:6px; cursor:pointer; font-size:0.75rem;">Ubah Pass</button>
-                    <button onclick="hapusAdmin('${adminId}', '${data.nama}')" style="background:#dc2626; color:#fff; border:none; padding:5px 10px; border-radius:6px; cursor:pointer; font-size:0.75rem;">Hapus</button>
-                </td>
-            </tr>`;
-        });
-    } catch (error) { console.error(error); }
+function togglePriority(agendaId, targetId) {
+    const agenda = agendas.find(a => a.id === agendaId);
+    const target = agenda.targets.find(t => t.id === targetId);
+    target.priority = !target.priority;
+    saveData();
+    openAgenda(agendaId);
 }
 
-// --- 4. MANAJEMEN SESI ---
-function listenToActiveSession() {
-    unsubscribeSession = onSnapshot(doc(db, "settings", "current_session"), (docSnap) => {
-        const statusSesiGuru = document.getElementById("lbl-status-sesi-guru");
-        
-        if (docSnap.exists() && docSnap.data().isActive) {
-            activeSessionData = docSnap.data();
-            if (currentUserData.role === "ADMIN") {
-                document.getElementById("form-buka-sesi").style.display = "none";
-                document.getElementById("info-sesi-aktif").classList.remove("hidden");
-                document.getElementById("lbl-nama-kegiatan").innerText = activeSessionData.namaKegiatan;
-                document.getElementById("lbl-tipe-sesi").innerText = activeSessionData.tipeSesi;
-                document.getElementById("lbl-batas-jam").innerText = activeSessionData.batasWaktu;
-                document.getElementById("lbl-admin-sesi").innerText = activeSessionData.adminNama;
-            }
-            statusSesiGuru.innerText = `(Sesi Aktif: ${activeSessionData.namaKegiatan} - ${activeSessionData.tipeSesi})`;
-            statusSesiGuru.style.backgroundColor = "var(--primary-light)";
-            statusSesiGuru.style.color = "var(--primary)";
-        } else {
-            activeSessionData = null;
-            if (currentUserData.role === "ADMIN") {
-                document.getElementById("form-buka-sesi").style.display = "grid";
-                document.getElementById("info-sesi-aktif").classList.add("hidden");
-            }
-            statusSesiGuru.innerText = "(Belum ada sesi absensi yang dimulai)";
-            statusSesiGuru.style.backgroundColor = "#ffe6e6";
-            statusSesiGuru.style.color = "var(--danger)";
-        }
-        
-        if (document.getElementById("page-dashboard").classList.contains("active")) initDashboardRealtime(); 
+function deleteTarget(agendaId, targetId) {
+    if (!confirm("Hapus target ini?")) return;
+    const agenda = agendas.find(a => a.id === agendaId);
+    agenda.targets = agenda.targets.filter(t => t.id !== targetId);
+    saveData();
+    openAgenda(agendaId);
+}
+
+function deleteAgenda(event, agendaId) {
+    event.stopPropagation();
+    if (!confirm("Hapus agenda beserta seluruh target di dalamnya?")) return;
+    agendas = agendas.filter(a => a.id !== agendaId);
+    saveData();
+    
+    const page = document.querySelector(".nav-item.active").dataset.page;
+    if(page === "archive") renderArchive();
+    else renderAgendas();
+}
+
+// ================================
+// TIMELINE AGENDA
+// ================================
+function renderTimeline() {
+    document.getElementById("pageTitle").innerText = "Timeline Agenda";
+    document.getElementById("pageSubtitle").innerText = "Visualisasi alur waktu agenda Anda. Klik lingkaran untuk menceklis agenda.";
+    
+    const content = document.getElementById("content");
+    content.style.display = "block";
+
+    // REVISI: Menggunakan seluruh data agendas (termasuk yang diarsip)
+    const sortedAgendas = [...agendas].sort((a, b) => {
+        const dateA = a.date ? new Date(a.date).getTime() : Infinity;
+        const dateB = b.date ? new Date(b.date).getTime() : Infinity;
+        return dateA - dateB;
     });
-}
 
-window.mulaiSesi = async () => {
-    const namaKegiatan = document.getElementById("input-nama-kegiatan").value.trim();
-    const tipeSesi = document.getElementById("input-tipe-sesi").value;
-    const batasWaktu = document.getElementById("input-batas-jam").value;
-    
-    if(!namaKegiatan || !batasWaktu) return alert("Mohon isi 'Nama Kegiatan' dan 'Batas Jam'!");
-
-    try {
-        await setDoc(doc(db, "settings", "current_session"), {
-            namaKegiatan: namaKegiatan,
-            tipeSesi: tipeSesi,
-            batasWaktu: batasWaktu,
-            adminNama: currentUserData.nama,
-            tanggal: new Date().toISOString().split('T')[0],
-            isActive: true,
-            timestamp: new Date()
-        });
-        document.getElementById("input-nama-kegiatan").value = "";
-        document.getElementById("input-tipe-sesi").selectedIndex = 0;
-        document.getElementById("input-batas-jam").value = "";
-    } catch (error) { alert("Gagal memulai sesi: " + error.message); }
-};
-
-window.tutupSesi = async () => {
-    if(confirm("Yakin ingin menutup sesi ini? (Guru tidak akan bisa absen lagi sampai ada sesi baru).")) {
-        await setDoc(doc(db, "settings", "current_session"), { isActive: false }, { merge: true });
-    }
-};
-
-// --- 5. DASHBOARD REAL-TIME ---
-function initDashboardRealtime() {
-    if (unsubscribeDashboard) unsubscribeDashboard();
-    const tbody = document.getElementById("recent-attendance-body");
-    
-    if (!activeSessionData) {
-        tbody.innerHTML = "<tr><td colspan='4' style='text-align:center; padding:30px;'>Belum ada sesi absensi yang dimulai hari ini.</td></tr>";
-        document.getElementById("stat-total").innerText = "0"; document.getElementById("stat-hadir").innerText = "0";
-        document.getElementById("stat-belum").innerText = "0"; document.getElementById("stat-tepat").innerText = "0";
-        document.getElementById("stat-terlambat").innerText = "0";
+    if (sortedAgendas.length === 0) {
+        content.innerHTML = `<div class="empty-state"><h2>Belum ada agenda</h2><p>Tambahkan agenda terlebih dahulu.</p></div>`;
         return;
     }
 
-    const q = query(collection(db, "attendance"), where("tanggal", "==", activeSessionData.tanggal));
-    unsubscribeDashboard = onSnapshot(q, async (snapshot) => {
-        let todaysData = [];
-        snapshot.forEach(doc => {
-            let d = doc.data();
-            // HANYA tarik data yang sesinya cocok DAN statusnya Tepat Waktu / Terlambat
-            if(d.namaKegiatan === activeSessionData.namaKegiatan && 
-               d.tipeSesi === activeSessionData.tipeSesi &&
-               (d.status === "Tepat Waktu" || d.status === "Terlambat")) {
-                todaysData.push(d);
+    const timelineCSS = `
+        <style>
+            .timeline-container {
+                display: flex;
+                flex-wrap: wrap; 
+                row-gap: 40px;   
+                column-gap: 0;
+                padding: 40px 20px;
+                background: #fff;
+                border-radius: 12px;
+                box-shadow: 0 4px 15px rgba(0,0,0,0.03);
+                margin-top: 20px;
+                width: 100%;
+                box-sizing: border-box;
+                overflow: hidden; 
             }
-        });
-        tbody.innerHTML = "";
-
-        if (currentUserData.role === "ADMIN") {
-            const guruSnap = await getDocs(collection(db, "guru"));
-            let totalGuru = guruSnap.empty ? 1 : guruSnap.size;
-            let totalHadir = todaysData.length;
-            let belumHadir = totalGuru - totalHadir; // Belum hadir fisik
-            
-            document.getElementById("stat-total").innerText = totalGuru;
-            document.getElementById("stat-hadir").innerText = totalHadir;
-            document.getElementById("stat-belum").innerText = belumHadir < 0 ? 0 : belumHadir;
-            document.getElementById("stat-tepat").innerText = todaysData.filter(d => d.status === "Tepat Waktu").length;
-            document.getElementById("stat-terlambat").innerText = todaysData.filter(d => d.status === "Terlambat").length;
-
-            if(todaysData.length === 0) {
-                tbody.innerHTML = "<tr><td colspan='4' style='text-align:center;'>Belum ada yang hadir pada sesi ini.</td></tr>";
-            } else {
-                // Urutkan berdasarkan waktu scan terbaru (timestamp)
-                todaysData.sort((a,b) => b.timestamp - a.timestamp).forEach(data => {
-                    let badgeStyle = data.status === 'Tepat Waktu' ? "background:#d1fae5; color:#059669;" : "background:#ffedd5; color:#ea580c;";
-                    
-                    tbody.innerHTML += `<tr>
-                        <td><strong>${data.namaGuru}</strong></td>
-                        <td>${data.namaZona}</td>
-                        <td>${data.waktu}</td>
-                        <td><span class="badge" style="${badgeStyle}">${data.status}</span></td>
-                    </tr>`;
-                });
+            .timeline-item {
+                flex: 1 1 220px; 
+                max-width: 300px;
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                position: relative;
+                box-sizing: border-box;
             }
-        } else {
-            let myAttendance = todaysData.filter(d => d.email === currentUserData.email);
-            if (myAttendance.length === 0) {
-                tbody.innerHTML = "<tr><td colspan='4' style='text-align:center;'>Anda belum absen untuk sesi ini.</td></tr>";
-            } else {
-                myAttendance.sort((a,b) => b.timestamp - a.timestamp).forEach(data => {
-                    let badgeStyle = data.status === 'Tepat Waktu' ? "background:#d1fae5; color:#059669;" : "background:#ffedd5; color:#ea580c;";
-
-                    tbody.innerHTML += `<tr>
-                        <td><strong>${data.namaGuru}</strong></td>
-                        <td>${data.namaZona}</td>
-                        <td>${data.waktu}</td>
-                        <td><span class="badge" style="${badgeStyle}">${data.status}</span></td>
-                    </tr>`;
-                });
+            .timeline-date {
+                font-weight: 600;
+                margin-bottom: 15px;
+                color: #64748b;
+                font-size: 14px;
             }
+            .timeline-item.completed .timeline-date {
+                color: #217346;
+            }
+            .timeline-node-wrapper {
+                position: relative;
+                width: 100%;
+                display: flex;
+                justify-content: center;
+                margin-bottom: 15px;
+            }
+            .timeline-line {
+                position: absolute;
+                top: 50%;
+                left: 50%;
+                width: 100%;
+                height: 4px;
+                background-color: #eef2f5;
+                z-index: 1;
+                transform: translateY(-50%);
+                transition: background-color 0.3s;
+            }
+            .timeline-item.completed .timeline-line {
+                background-color: #217346;
+            }
+            .timeline-node {
+                position: relative;
+                z-index: 2;
+                width: 32px;
+                height: 32px;
+                border-radius: 50%;
+                background-color: white;
+                border: 3px solid #eef2f5;
+                display: flex;
+                justify-content: center;
+                align-items: center;
+                cursor: pointer;
+                box-shadow: 0 0 0 6px white;
+                transition: all 0.3s ease;
+            }
+            .timeline-item.completed .timeline-node {
+                background-color: #217346;
+                border-color: #217346;
+            }
+            .timeline-icon {
+                color: transparent;
+                font-size: 14px;
+                font-weight: bold;
+            }
+            .timeline-item.completed .timeline-icon {
+                color: white;
+            }
+            .timeline-content {
+                text-align: center;
+                padding: 0 10px;
+            }
+            .timeline-title {
+                font-size: 14px;
+                font-weight: 700;
+                color: #1e293b;
+                margin-bottom: 5px;
+            }
+            .timeline-subtitle {
+                font-size: 12px;
+                color: #64748b;
+            }
+        </style>
+    `;
+
+    let timelineHTML = `<div class="timeline-container">`;
+
+    sortedAgendas.forEach((agenda) => {
+        const isCompleted = agenda.timelineCompleted ? true : false;
+        let dateStr = "Tanpa Tanggal";
+        if (agenda.date) {
+            dateStr = new Date(agenda.date).toLocaleDateString('id-ID', { month: 'short', day: 'numeric' });
         }
+
+        timelineHTML += `
+            <div class="timeline-item ${isCompleted ? 'completed' : ''}">
+                <div class="timeline-date">${dateStr}</div>
+                <div class="timeline-node-wrapper">
+                    <div class="timeline-line"></div>
+                    <div class="timeline-node" onclick="toggleTimelineStatus('${agenda.id}')">
+                        <span class="timeline-icon">✓</span>
+                    </div>
+                </div>
+                <div class="timeline-content">
+                    <div class="timeline-title">${agenda.name}</div>
+                    <div class="timeline-subtitle">${agenda.targets ? agenda.targets.length : 0} Target</div>
+                </div>
+            </div>
+        `;
     });
+
+    timelineHTML += `</div>`;
+    content.innerHTML = timelineCSS + timelineHTML;
+
+    setTimeout(fixTimelineLines, 10);
 }
 
-// --- 6. LOGIKA HYBRID SCANNER CONTINUOUS (TANPA HENTI) ---
-let isProcessingScan = false;
-let lastScannedText = "";
-let lastScannedTime = 0;
-
-window.startScanner = async () => {
-    if (!activeSessionData) return alert("GAGAL: Admin belum memulai sesi absensi apapun!");
-    
-    if (currentUserData.role === "ADMIN") {
-        const selectedZoneId = document.getElementById("pic-zone-select").value;
-        if (!selectedZoneId) return alert("GAGAL: Pilih 'Zona Tugas Anda' terlebih dahulu!");
+function toggleTimelineStatus(agendaId) {
+    const agenda = agendas.find(a => a.id === agendaId);
+    if (agenda) {
+        agenda.timelineCompleted = !agenda.timelineCompleted;
+        saveData(); 
+        renderTimeline(); 
     }
+}
 
-    document.getElementById("btn-start-scan").classList.add("hidden");
-    document.getElementById("scan-result").classList.remove("hidden"); 
-    document.getElementById("scan-result").innerHTML = "<div style='text-align:center; padding:15px; color:#6b7280; font-weight:bold;'>Kamera aktif. Silakan arahkan ID Card / QR Code ke kamera...</div>";
-    
-    // Buat tombol tutup kamera jika belum ada
-    let stopBtn = document.getElementById("btn-stop-scan");
-    if(!stopBtn) {
-        stopBtn = document.createElement("button");
-        stopBtn.id = "btn-stop-scan";
-        stopBtn.className = "btn-danger";
-        stopBtn.style.marginTop = "15px";
-        stopBtn.style.width = "100%";
-        stopBtn.innerText = "Tutup Kamera Scanner";
-        stopBtn.onclick = () => window.stopScanner();
-        document.getElementById("scan-result").parentNode.insertBefore(stopBtn, document.getElementById("scan-result"));
-    }
-    stopBtn.classList.remove("hidden");
-
-    html5QrcodeScanner = new Html5QrcodeScanner("reader", { fps: 10, qrbox: {width: 250, height: 250} }, false);
-    html5QrcodeScanner.render(async (decodedText, decodedResult) => {
-        const now = Date.now();
+function fixTimelineLines() {
+    const items = document.querySelectorAll('.timeline-item');
+    items.forEach((item, index) => {
+        const line = item.querySelector('.timeline-line');
+        if (line) line.style.display = 'block'; 
         
-        // MENCEGAH DOUBLE SCAN: Jeda 3 detik untuk barcode yang sama
-        if (isProcessingScan) return;
-        if (decodedText === lastScannedText && (now - lastScannedTime < 3000)) return;
-        
-        isProcessingScan = true;
-        lastScannedText = decodedText;
-        lastScannedTime = now;
-
-        // Indikator loading warna biru di bawah kamera
-        document.getElementById("scan-result").innerHTML = `<div style="background: #eef2ff; padding: 15px; border-radius: 8px; text-align: center; color: #4f46e5; margin-top:20px; font-weight:bold;">⏳ Menyimpan data absen...</div>`;
-
-        await prosesHasilScan(decodedText);
-        
-        isProcessingScan = false; // Buka gerbang untuk scan orang selanjutnya
-    }, (errorMessage) => { /* Abaikan error sensor cahaya kamera */ });
-};
-
-// Fungsi mematikan kamera manual
-window.stopScanner = () => {
-    if (html5QrcodeScanner) {
-        html5QrcodeScanner.clear();
-        html5QrcodeScanner = null;
-    }
-    document.getElementById("btn-start-scan").classList.remove("hidden");
-    const stopBtn = document.getElementById("btn-stop-scan");
-    if(stopBtn) stopBtn.classList.add("hidden");
-    document.getElementById("scan-result").innerHTML = "";
-    document.getElementById("scan-result").classList.add("hidden"); 
-};
-
-async function prosesHasilScan(scannedText) {
-    let namaGuru, emailGuru, namaZona;
-    const resultDiv = document.getElementById("scan-result");
-
-    try {
-        if (currentUserData.role === "ADMIN") {
-            const selectedZoneId = document.getElementById("pic-zone-select").value;
-            const qZone = query(collection(db, "zones"), where("id", "==", selectedZoneId));
-            const zoneSnap = await getDocs(qZone);
-            
-            const qGuru = query(collection(db, "guru"), where("Barcode", "==", scannedText));
-            const guruSnap = await getDocs(qGuru);
-            
-            if(guruSnap.empty) {
-                // Tampilan merah jika barcode tidak ada di Excel
-                resultDiv.innerHTML = `<div style="background:#fee2e2; padding:15px; border-radius:8px; border-left:4px solid var(--danger); margin-top:20px;"><strong style="color:var(--danger); font-size:1.1rem;">❌ GAGAL: Barcode Tidak Terdaftar!</strong><p style="margin:5px 0 0 0;">Barcode ${scannedText} tidak ada di database Guru.</p></div>`;
-                return;
-            }
-            
-            const guruData = guruSnap.docs[0].data();
-            namaGuru = guruData.Nama;
-            emailGuru = guruData.Email;
-            namaZona = zoneSnap.docs[0].data().nama; // Zona tempat admin bertugas
-            const zonaGuruAsli = guruData.Zona; // Zona penugasan asli guru dari database
-
-            // FITUR BARU: VALIDASI SALAH ZONA (Admin Scan ID Guru)
-            if (zonaGuruAsli !== namaZona) {
-                resultDiv.innerHTML = `<div style="background:#fee2e2; padding:15px; border-radius:8px; border-left:4px solid var(--danger); margin-top:20px;">
-                    <h3 style="color:var(--danger); margin-bottom:5px;">❌ SALAH ZONA TUGAS!</h3>
-                    <p style="margin:0;">Guru <strong>${namaGuru}</strong> ditugaskan di <strong>${zonaGuruAsli}</strong>, bukan di sini (${namaZona}).<br>Silakan arahkan guru tersebut ke zona yang benar.</p>
-                </div>`;
-                return; // Hentikan proses, jangan simpan absen
-            }
-
-        } else {
-            const qZone = query(collection(db, "zones"), where("kode", "==", scannedText));
-            const zoneSnap = await getDocs(qZone);
-            if(zoneSnap.empty) {
-                resultDiv.innerHTML = `<div style="background:#fee2e2; padding:15px; border-radius:8px; border-left:4px solid var(--danger); margin-top:20px;"><strong style="color:var(--danger);">❌ GAGAL:</strong> QR Code Zona tidak valid!</div>`;
-                return;
-            }
-            
-            namaGuru = currentUserData.nama;
-            emailGuru = currentUserData.email;
-            namaZona = zoneSnap.docs[0].data().nama; // Zona milik QR yang di-scan
-
-            // FITUR BARU: VALIDASI SALAH ZONA (Guru Scan QR)
-            if (currentUserData.zona !== namaZona) {
-                resultDiv.innerHTML = `<div style="background:#fee2e2; padding:15px; border-radius:8px; border-left:4px solid var(--danger); margin-top:20px;">
-                    <h3 style="color:var(--danger); margin-bottom:5px;">❌ SALAH ZONA TUGAS!</h3>
-                    <p style="margin:0;">Anda seharusnya bertugas di zona <strong>${currentUserData.zona}</strong>.<br>Anda tidak diizinkan absen di zona ${namaZona}.</p>
-                </div>`;
-                return; // Hentikan proses
-            }
-        }
-
-        const now = new Date();
-        const currentTimeString = now.getHours().toString().padStart(2, '0') + ":" + now.getMinutes().toString().padStart(2, '0');
-        const status = currentTimeString <= activeSessionData.batasWaktu ? "Tepat Waktu" : "Terlambat";
-        
-        const tanggalSQL = now.toISOString().split('T')[0];
-        const hariIndo = now.toLocaleDateString('id-ID', { weekday: 'long' });
-        const tanggalIndo = now.toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' });
-
-        const qCek = query(collection(db, "attendance"), where("tanggal", "==", tanggalSQL), where("email", "==", emailGuru));
-        const cekSnap = await getDocs(qCek);
-        let sudahAbsen = false;
-        cekSnap.forEach(doc => {
-            let d = doc.data();
-            if(d.namaKegiatan === activeSessionData.namaKegiatan && d.tipeSesi === activeSessionData.tipeSesi) sudahAbsen = true;
-        });
-
-        if (sudahAbsen) {
-            // Tampilan Kuning jika guru tersebut nge-scan dua kali
-            resultDiv.innerHTML = `<div style="background:#fef3c7; padding:15px; border-radius:8px; border-left:4px solid #d97706; margin-top:20px;"><h3 style="color:#b45309; margin-bottom:5px;">⚠️ SUDAH ABSEN</h3><p style="margin:0;"><strong>${namaGuru}</strong> sudah tercatat hadir pada sesi ini. Lanjut ke peserta berikutnya.</p></div>`;
+        if (index === items.length - 1) {
+            if (line) line.style.display = 'none';
             return;
         }
-
-        // Simpan ke Cloud
-        await addDoc(collection(db, "attendance"), {
-            namaGuru, email: emailGuru, namaZona, waktu: currentTimeString, status, tanggal: tanggalSQL, hariStr: hariIndo, tanggalStr: tanggalIndo, 
-            namaKegiatan: activeSessionData.namaKegiatan, 
-            tipeSesi: activeSessionData.tipeSesi, 
-            adminPenanggungJawab: activeSessionData.adminNama, 
-            timestamp: now.getTime()
-        });
-
-        // Tampilan Sukses (Kamera tetap nyala di atasnya)
-        resultDiv.innerHTML = `<div style="background: ${status === 'Tepat Waktu' ? 'var(--primary-light)' : '#ffe6e6'}; padding: 20px; border-radius: 12px; margin-top: 20px; border-left: 4px solid ${status === 'Tepat Waktu' ? 'var(--success)' : 'var(--danger)'}; box-shadow: 0 4px 6px rgba(0,0,0,0.05);"><h3 style="color: ${status === 'Tepat Waktu' ? 'var(--success)' : 'var(--danger)'}; margin-bottom:10px;">✓ ${namaGuru} Berhasil Absen</h3><p><strong>Waktu:</strong> ${currentTimeString} WIB | <strong>Status:</strong> <span class="badge ${status === 'Tepat Waktu' ? 'badge-tepat' : 'badge-terlambat'}">${status}</span></p></div>`;
         
-    } catch (error) { 
-        resultDiv.innerHTML = `<div style="background:#fee2e2; padding:15px; border-radius:8px; border-left:4px solid var(--danger); margin-top:20px;"><strong style="color:var(--danger);">ERROR JARINGAN:</strong> ${error.message}</div>`;
-    }
-}
-
-// --- 7. DATA GURU: EDIT, HAPUS, & IMPORT ---
-window.hapusGuru = async (barcode, nama) => {
-    const pass = prompt(`Masukkan password otorisasi untuk MENGHAPUS data ${nama}:`);
-    if (pass !== "kmigorda") {
-        if (pass !== null) alert("Password salah! Aksi dibatalkan.");
-        return;
-    }
-
-    if (confirm(`Peringatan: Yakin ingin menghapus guru "${nama}" dari sistem secara permanen?`)) {
-        try {
-            await deleteDoc(doc(db, "guru", barcode));
-            alert(`SUKSES: Data guru ${nama} berhasil dihapus.`);
-            renderTabelGuru();
-        } catch (error) { alert("Gagal menghapus data: " + error.message); }
-    }
-};
-
-window.editGuru = async (barcode, namaLama, zonaLama, emailLama, kamarLama) => {
-    const pass = prompt(`Masukkan password otorisasi untuk MENGEDIT data ${namaLama}:`);
-    if (pass !== "kmigorda") {
-        if (pass !== null) alert("Password salah! Aksi dibatalkan.");
-        return;
-    }
-
-    const namaBaru = prompt("Ubah Nama:", namaLama);
-    if (namaBaru === null) return;
-    
-    const kamarBaru = prompt("Ubah Kamar:", kamarLama);
-    if (kamarBaru === null) return;
-
-    const zonaBaru = prompt("Ubah Zona Penugasan:", zonaLama);
-    if (zonaBaru === null) return;
-    
-    const emailBaru = prompt("Ubah Email Login:", emailLama);
-    if (emailBaru === null) return;
-
-    try {
-        await updateDoc(doc(db, "guru", barcode), { 
-            Nama: namaBaru.trim(), 
-            Kamar: kamarBaru.trim(),
-            Zona: zonaBaru.trim(),
-            Email: emailBaru.trim()
-        });
-        alert(`SUKSES: Data guru berhasil diperbarui.`);
-        renderTabelGuru(); 
-    } catch (error) { alert("Gagal mengedit data guru: " + error.message); }
-};
-
-window.downloadTemplate = () => {
-    const templateData = [{"No": 1, "Barcode": "187643", "Nama": "Raihan", "Tahun": "Thn 6", "Daerah": "Bima", "Kamar": "Panjimas", "Study": "Ilmu Qur'an Tafsir", "No HP": "08123456789", "Zona": "Gedung Riyadh", "Email": "ahmad.faizan@eduabsen.com"}];
-    const ws = XLSX.utils.json_to_sheet(templateData);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "Data Guru");
-    XLSX.writeFile(wb, "Template_Import_Guru.xlsx");
-};
-
-window.handleExcelImport = (event) => {
-    const file = event.target.files[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = async (e) => {
-        const data = new Uint8Array(e.target.result);
-        const workbook = XLSX.read(data, {type: 'array'});
-        const worksheet = workbook.Sheets[workbook.SheetNames[0]];
-        const jsonData = XLSX.utils.sheet_to_json(worksheet);
-        
-        let validData = [];
-        jsonData.forEach(row => {
-            if(row.Barcode && row.Nama && row.Zona && row.Email) {
-                row["No HP"] = row["No HP"] ? row["No HP"].toString() : "-";
-                row["Barcode"] = row["Barcode"].toString();
-                validData.push(row);
-            }
-        });
-
-        if (validData.length > 0) {
-            alert("Sedang mengupload " + validData.length + " data...");
-            try {
-                const batch = writeBatch(db);
-                validData.forEach(guru => batch.set(doc(db, "guru", guru.Barcode), guru));
-                await batch.commit();
-                alert("Berhasil mengupload ke server.");
-                renderTabelGuru();
-            } catch (error) { alert("Gagal mengupload: " + error.message); }
+        if (item.offsetTop < items[index + 1].offsetTop) {
+            if (line) line.style.display = 'none';
         }
-        event.target.value = ""; 
-    };
-    reader.readAsArrayBuffer(file);
-};
-
-// --- FUNGSI BARU: DOWNLOAD QR CODE GURU ---
-window.downloadQRGuru = (barcode, nama) => {
-    // 1. Buat elemen penampung sementara (tersembunyi)
-    const tempDiv = document.createElement("div");
-    tempDiv.style.display = "none";
-    document.body.appendChild(tempDiv);
-
-    // 2. Generate QR Code ke dalam penampung
-    new QRCode(tempDiv, {
-        text: barcode,
-        width: 256,
-        height: 256,
-        colorDark : "#000000",
-        colorLight : "#ffffff",
-        correctLevel : QRCode.CorrectLevel.H
-    });
-
-    // 3. Beri waktu beberapa milidetik agar gambar QR selesai dirender
-    setTimeout(() => {
-        const qrCanvas = tempDiv.querySelector("canvas");
-        if (qrCanvas) {
-            // 4. Siapkan Canvas baru untuk menggabungkan QR dan Teks
-            const finalCanvas = document.createElement("canvas");
-            finalCanvas.width = 300;
-            finalCanvas.height = 370; // Lebih tinggi untuk tempat nama
-            const ctx = finalCanvas.getContext("2d");
-
-            // Beri background putih polos
-            ctx.fillStyle = "#ffffff";
-            ctx.fillRect(0, 0, finalCanvas.width, finalCanvas.height);
-
-            // Tempelkan gambar QR Code di tengah atas
-            ctx.drawImage(qrCanvas, 22, 20, 256, 256);
-
-            // Tambahkan Teks Nama Guru
-            ctx.fillStyle = "#1f2937"; // Warna teks gelap
-            ctx.font = "bold 18px sans-serif";
-            ctx.textAlign = "center";
-            
-            // Potong nama jika terlalu panjang agar tidak keluar batas gambar
-            let displayName = nama.length > 25 ? nama.substring(0, 25) + "..." : nama;
-            ctx.fillText(displayName, finalCanvas.width / 2, 315);
-            
-            // Tambahkan Teks Barcode / ID di bawah nama
-            ctx.font = "14px sans-serif";
-            ctx.fillStyle = "#6b7280"; // Warna abu-abu
-            ctx.fillText("ID: " + barcode, finalCanvas.width / 2, 340);
-
-            // 5. Ubah canvas menjadi file gambar dan otomatis download
-            const link = document.createElement("a");
-            link.download = `QR_Guru_${nama.replace(/[^a-zA-Z0-9]/g, '_')}.png`; // Bersihkan nama file
-            link.href = finalCanvas.toDataURL("image/png");
-            link.click();
-        }
-        // Hapus elemen sementara agar memori bersih
-        document.body.removeChild(tempDiv);
-    }, 300);
-};
-
-// --- UPDATE TABEL GURU (MENAMBAHKAN TOMBOL DOWNLOAD QR) ---
-async function renderTabelGuru() {
-    const tbody = document.getElementById("body-guru");
-    tbody.innerHTML = "<tr><td colspan='10' style='text-align:center;'>Memuat...</td></tr>";
-    
-    const guruSnap = await getDocs(collection(db, "guru"));
-    tbody.innerHTML = "";
-    
-    if (guruSnap.empty) {
-        return tbody.innerHTML = "<tr><td colspan='10' style='text-align:center;'>Belum ada data guru.</td></tr>";
-    }
-    
-    let idx = 1;
-    guruSnap.forEach((doc) => {
-        let guru = doc.data();
-        let barcodeId = doc.id; 
-        
-        tbody.innerHTML += `<tr>
-            <td>${idx++}</td>
-            <td>${guru.Barcode}</td>
-            <td>${guru.Nama}</td>
-            <td>${guru.Tahun}</td>
-            <td>${guru.Daerah}</td>
-            <td>${guru.Kamar}</td>
-            <td>${guru.Study}</td>
-            <td>${guru["No HP"]}</td>
-            <td>${guru.Zona}</td>
-            <td>
-                <button onclick="downloadQRGuru('${guru.Barcode}', '${guru.Nama}')" style="background:#10b981; color:#fff; border:none; padding:5px; border-radius:4px; cursor:pointer; font-size:0.7rem; margin-bottom:5px; display:block; width:100%; font-weight:bold;">Unduh QR</button>
-                <button onclick="editGuru('${barcodeId}', '${guru.Nama}', '${guru.Zona}', '${guru.Email}', '${guru.Kamar}')" style="background:#f59e0b; color:#fff; border:none; padding:4px 6px; border-radius:4px; cursor:pointer; font-size:0.7rem; margin-bottom:5px; display:block; width:100%;">Edit</button>
-                <button onclick="hapusGuru('${barcodeId}', '${guru.Nama}')" style="background:#dc2626; color:#fff; border:none; padding:4px 6px; border-radius:4px; cursor:pointer; font-size:0.7rem; display:block; width:100%;">Hapus</button>
-            </td>
-        </tr>`;
     });
 }
 
-// --- UPDATE RENDER ZONA (MENAMBAH TOMBOL DOWNLOAD PER ZONA) ---
-async function renderManajemenZona() {
-    const grid = document.getElementById("zona-grid");
-    const zonesSnap = await getDocs(collection(db, "zones"));
-    grid.innerHTML = "";
-    
-    let zones = [];
-    zonesSnap.forEach(docSnap => {
-        let data = docSnap.data();
-        zones.push({ docId: docSnap.id, ...data });
-    });
+// ================================
+// FITUR ARSIP AGENDA
+// ================================
+function toggleArchive(event, agendaId) {
+    event.stopPropagation();
+    const agenda = agendas.find(a => a.id === agendaId);
+    if (agenda) {
+        agenda.isArchived = !agenda.isArchived; 
+        saveData();
+        
+        if (agenda.isArchived) renderAgendas(); 
+        else renderArchive();
+    }
+}
 
-    zones.forEach(zona => {
-        grid.innerHTML += `
-        <div class="zona-card" style="text-align: center; padding: 20px; border: 1px solid #eee; border-radius: 12px; background: #fff; box-shadow: 0 2px 4px rgba(0,0,0,0.02);">
-            <h4 style="margin-bottom: 5px; color: #1f2937;">${zona.nama}</h4>
-            <p style="font-size: 0.8rem; color: #6b7280; margin-bottom: 15px;">Kode: ${zona.kode}</p>
-            <div class="qr-container" id="qr-${zona.id}" style="display: flex; justify-content: center; margin-bottom: 15px; min-height: 128px;"></div>
-            <button onclick="downloadQRZona('${zona.kode}', '${zona.nama}')" style="background:#10b981; color:#fff; border:none; padding:8px; border-radius:8px; cursor:pointer; font-size:0.8rem; width:100%; font-weight:bold; margin-bottom: 8px;">Unduh QR Zona Ini</button>
-            <div style="display: flex; gap: 5px;">
-                <button onclick="editZona('${zona.docId}', '${zona.nama}')" style="background:#f59e0b; color:#fff; border:none; padding:5px; border-radius:6px; cursor:pointer; font-size:0.75rem; flex: 1;">Edit</button>
-                <button onclick="hapusZona('${zona.docId}', '${zona.nama}')" style="background:#dc2626; color:#fff; border:none; padding:5px; border-radius:6px; cursor:pointer; font-size:0.75rem; flex: 1;">Hapus</button>
+function renderArchive() {
+    document.getElementById("pageTitle").innerText = "Arsip Agenda";
+    document.getElementById("pageSubtitle").innerText = "Agenda yang sudah selesai dan disimpan.";
+    
+    const content = document.getElementById("content");
+    content.style.display = "grid"; 
+    content.innerHTML = "";
+
+    const archivedAgendas = agendas.filter(a => a.isArchived);
+
+    if (archivedAgendas.length === 0) {
+        content.innerHTML = `<div class="empty-state"><h2>Arsip Kosong</h2><p>Belum ada agenda yang diarsipkan.</p></div>`;
+        return;
+    }
+
+    archivedAgendas.forEach(agenda => {
+        const total = agenda.targets.length;
+        const completed = agenda.targets.filter(t => t.completed).length;
+        const priority = agenda.targets.filter(t => t.priority).length;
+        const progress = total === 0 ? 0 : Math.round((completed / total) * 100);
+
+        const card = document.createElement("div");
+        card.className = "agenda-card";
+        card.style.opacity = "0.8"; 
+        card.innerHTML = `
+            <div class="agenda-card-header">
+                <div>
+                    <h2>${agenda.name}</h2>
+                    <p style="color: #64748b; font-size:0.85rem; font-weight:600; margin-bottom: 0.3rem;">Hari H: ${formatDate(agenda.date)}</p>
+                    <p>${agenda.description || "Tidak ada deskripsi"}</p>
+                </div>
+                <div style="display: flex; gap: 0.5rem; align-items:flex-start;">
+                    <button onclick="toggleArchive(event, '${agenda.id}')" style="background:#EBF5FF; color:#3B82F6; border:none; width:36px; height:36px; border-radius:10px; cursor:pointer;" title="Kembalikan ke Semua Agenda">🔙</button>
+                    <button class="delete-btn" onclick="deleteAgenda(event, '${agenda.id}')" title="Hapus Permanen">🗑</button>
+                </div>
             </div>
-        </div>`;
+            <div class="agenda-info">
+                <span>${total} Target</span>
+                <span>⭐ ${priority} Prioritas</span>
+            </div>
+            <div class="progress"><div class="progress-bar" style="width:${progress}%; background:#94a3b8;"></div></div>
+            <div class="agenda-footer">
+                <span style="color:#64748b;">${progress}% selesai</span>
+                <button onclick="openAgenda('${agenda.id}')" style="color:#64748b;">Lihat Detail →</button>
+            </div>
+        `;
+        content.appendChild(card);
     });
-    
-    setTimeout(() => {
-        zones.forEach(zona => {
-            const container = document.getElementById(`qr-${zona.id}`);
-            if(container) {
-                container.innerHTML = "";
-                new QRCode(container, {
-                    text: zona.kode, 
-                    width: 128, 
-                    height: 128, 
-                    colorDark : "#000000", 
-                    colorLight : "#ffffff", 
-                    correctLevel : QRCode.CorrectLevel.H
-                });
-            }
-        });
-    }, 100);
 }
 
-// --- FUNGSI BARU: DOWNLOAD SATU QR CODE ZONA (RESOLUSI TINGGI UNTUK POSTER) ---
-window.downloadQRZona = (kodeZona, namaZona) => {
-    // 1. Buat elemen penampung sementara (tersembunyi)
-    const tempDiv = document.createElement("div");
-    tempDiv.style.display = "none";
-    document.body.appendChild(tempDiv);
-
-    // 2. Generate QR Code ukuran besar ke dalam penampung
-    new QRCode(tempDiv, {
-        text: kodeZona,
-        width: 300,
-        height: 300,
-        colorDark : "#000000",
-        colorLight : "#ffffff",
-        correctLevel : QRCode.CorrectLevel.H
-    });
-
-    // 3. Beri waktu agar gambar QR selesai dirender
-    setTimeout(() => {
-        const qrCanvas = tempDiv.querySelector("canvas");
-        if (qrCanvas) {
-            // 4. Siapkan Canvas baru untuk menggabungkan QR dan Teks
-            const finalCanvas = document.createElement("canvas");
-            finalCanvas.width = 350;
-            finalCanvas.height = 420; // Lebih tinggi untuk tempat tulisan
-            const ctx = finalCanvas.getContext("2d");
-
-            // Beri background putih polos
-            ctx.fillStyle = "#ffffff";
-            ctx.fillRect(0, 0, finalCanvas.width, finalCanvas.height);
-
-            // Tempelkan gambar QR Code di tengah
-            ctx.drawImage(qrCanvas, 25, 20, 300, 300);
-
-            // Tambahkan Teks Nama Zona
-            ctx.fillStyle = "#1f2937"; // Warna teks gelap
-            ctx.font = "bold 24px sans-serif";
-            ctx.textAlign = "center";
-            ctx.fillText(namaZona, finalCanvas.width / 2, 360);
-            
-            // Tambahkan Instruksi di bawah nama zona
-            ctx.font = "16px sans-serif";
-            ctx.fillStyle = "#6b7280"; // Warna abu-abu
-            ctx.fillText("Scan QR untuk Absen di Sini", finalCanvas.width / 2, 390);
-
-            // 5. Ubah canvas menjadi file gambar dan otomatis download
-            const link = document.createElement("a");
-            link.download = `Poster_QR_Zona_${namaZona.replace(/[^a-zA-Z0-9]/g, '_')}.png`; 
-            link.href = finalCanvas.toDataURL("image/png");
-            link.click();
-        }
-        // Hapus elemen sementara agar memori bersih
-        document.body.removeChild(tempDiv);
-    }, 300);
-};
-
-// --- FUNGSI BARU: REFRESH SEMUA QR ZONA (ANTI-KECURANGAN) ---
-window.refreshSemuaQRZona = async () => {
-    if (currentUserData.role !== "ADMIN") return alert("Akses Ditolak!");
+// ================================
+// HALAMAN COUNTDOWN & HABIT
+// ================================
+function renderCountdowns() {
+    document.getElementById("pageTitle").innerText = "Countdown & Target Habit";
+    document.getElementById("pageSubtitle").innerText = "Hitung mundur ke acara penting atau bangun kebiasaan harian Anda.";
     
-    if (!confirm("PERINGATAN ANTI-KECURANGAN:\n\nAnda akan mereset dan MENGGANTI SEMUA QR Code Zona. QR Code yang lama (maupun foto yang disimpan guru) akan HANGUS dan otomatis ditolak oleh sistem.\n\nYakin ingin mereset sekarang?")) return;
+    const content = document.getElementById("content");
+    content.style.display = "grid"; 
+    content.innerHTML = "";
 
-    const btn = document.getElementById("btn-refresh-qr");
-    if(btn) { btn.innerText = "Mereset..."; btn.disabled = true; }
+    const header = document.querySelector(".header");
+    let actionBtn = header.querySelector(".btn-primary");
+    actionBtn.innerText = "+ Tambah Countdown";
+    actionBtn.onclick = openCountdownModal;
 
-    try {
-        const zonesSnap = await getDocs(collection(db, "zones"));
-        const batch = writeBatch(db); // Gunakan batch agar update ke database terjadi serentak
-
-        zonesSnap.forEach(docSnap => {
-            const data = docSnap.data();
-            
-            // Generate 6 kode acak baru (Kombinasi huruf kapital & angka)
-            const randomStr = Math.random().toString(36).substring(2, 8).toUpperCase();
-            
-            // Format kode baru: "QR_G_RIYADH_A8F2K9"
-            const newKode = `QR_${data.id}_${randomStr}`; 
-
-            batch.update(doc(db, "zones", docSnap.id), { kode: newKode });
-        });
-
-        await batch.commit();
-        alert("SUKSES: Semua QR Code Zona telah diperbarui!\n\nGuru yang mencoba scan pakai foto QR lama akan langsung DITOLAK. Silakan unduh/tampilkan QR yang baru.");
-        
-        renderManajemenZona(); // Muat ulang gambar QR di layar dengan kode yang baru
-    } catch (error) {
-        alert("Gagal mereset QR: " + error.message);
-    } finally {
-        if(btn) { btn.innerText = "🔄 Refresh Semua QR"; btn.disabled = false; }
-    }
-};
-
-
-// --- 8. FUNGSI LOGIKA REKAP OTOMATIS & KONFIRMASI STATUS UI (MODAL) ---
-async function getRekapWithAbsentees() {
-    const attSnap = await getDocs(collection(db, "attendance"));
-    const guruSnap = await getDocs(collection(db, "guru"));
-
-    let allGuru = [];
-    guruSnap.forEach(doc => allGuru.push(doc.data()));
-
-    let dataRekap = [];
-    let uniqueSessions = {}; 
-
-    attSnap.forEach(doc => {
-        let d = doc.data();
-        d.docId = doc.id;           
-        d.isVirtual = false;        
-        dataRekap.push(d);
-        
-        let sessionKey = `${d.tanggal}_${d.namaKegiatan}_${d.tipeSesi}`;
-        if (!uniqueSessions[sessionKey]) {
-            uniqueSessions[sessionKey] = {
-                tanggal: d.tanggal, hariStr: d.hariStr, tanggalStr: d.tanggalStr, namaKegiatan: d.namaKegiatan,
-                tipeSesi: d.tipeSesi, adminPenanggungJawab: d.adminPenanggungJawab, timestamp: d.timestamp,
-                attendedEmails: new Set()
-            };
-        }
-        uniqueSessions[sessionKey].attendedEmails.add(d.email);
-    });
-
-    for (let key in uniqueSessions) {
-        let session = uniqueSessions[key];
-        allGuru.forEach(guru => {
-            if (!session.attendedEmails.has(guru.Email)) {
-                dataRekap.push({
-                    isVirtual: true, email: guru.Email,
-                    tanggal: session.tanggal, hariStr: session.hariStr, tanggalStr: session.tanggalStr, waktu: "-",
-                    namaKegiatan: session.namaKegiatan, tipeSesi: session.tipeSesi, namaGuru: guru.Nama, namaZona: guru.Zona || "-",
-                    status: "Tidak Hadir", adminPenanggungJawab: session.adminPenanggungJawab, timestamp: session.timestamp - 1 
-                });
-            }
-        });
-    }
-
-    dataRekap.sort((a, b) => b.timestamp - a.timestamp);
-    return dataRekap;
-}
-
-async function renderRekap() {
-    const tbody = document.getElementById("body-rekap");
-    tbody.innerHTML = "<tr><td colspan='9' style='text-align:center;'>Mengkalkulasi kehadiran dan alpa dari server...</td></tr>";
-    try {
-        allRekapData = await getRekapWithAbsentees();
-        filteredRekapData = [...allRekapData]; 
-        
-        window.applyFilters(); 
-    } catch (error) {
-        tbody.innerHTML = `<tr><td colspan='9' style='text-align:center; color:red;'>Gagal memuat: ${error.message}</td></tr>`;
-    }
-}
-
-// ----------------------------------------------------
-// SISTEM POP-UP UBAH STATUS (MODAL UI)
-// ----------------------------------------------------
-window.ubahStatusRekap = (index) => {
-    if (currentUserData.role !== "ADMIN") return alert("Akses Ditolak!");
-    
-    currentEditIndex = index;
-    const data = filteredRekapData[index];
-    
-    // Tampilkan detail guru
-    document.getElementById("modal-status-name").innerHTML = `<strong>${data.namaGuru}</strong><br>Sesi: ${data.namaKegiatan} (${data.tipeSesi})`;
-    
-    // Setel status sebelumnya ke dropdown
-    document.getElementById("modal-status-select").value = data.status;
-    
-    // Setel waktu 
-    const timeGroup = document.getElementById("modal-status-time-group");
-    if (data.isVirtual || data.status === "Tidak Hadir") {
-        const now = new Date();
-        document.getElementById("modal-status-time").value = now.getHours().toString().padStart(2, '0') + ":" + now.getMinutes().toString().padStart(2, '0');
-        timeGroup.classList.add("hidden"); // Sembunyikan jam jika defaultnya Tidak Hadir
-    } else {
-        document.getElementById("modal-status-time").value = data.waktu;
-        timeGroup.classList.remove("hidden");
-    }
-    
-    document.getElementById("modal-status").classList.remove("hidden");
-};
-
-window.onStatusSelectChange = () => {
-    const val = document.getElementById("modal-status-select").value;
-    if (val === "Tidak Hadir") {
-        document.getElementById("modal-status-time-group").classList.add("hidden");
-    } else {
-        document.getElementById("modal-status-time-group").classList.remove("hidden");
-    }
-};
-
-window.closeModalStatus = () => {
-    document.getElementById("modal-status").classList.add("hidden");
-    currentEditIndex = -1;
-};
-
-window.simpanStatusBaru = async () => {
-    if (currentEditIndex === -1) return;
-    
-    const data = filteredRekapData[currentEditIndex];
-    const statusBaru = document.getElementById("modal-status-select").value;
-    const jamBaru = document.getElementById("modal-status-time").value;
-    const btnSimpan = document.getElementById("btn-simpan-status");
-
-    // Jika tidak ada perubahan, langsung tutup saja
-    if (statusBaru === data.status && jamBaru === data.waktu) {
-        window.closeModalStatus();
+    if (countdowns.length === 0) {
+        content.innerHTML = `<div class="empty-state"><h2>Belum ada Countdown</h2><p>Mulai target kebiasaan baru atau hitung mundur ke hari H!</p></div>`;
         return;
     }
 
-    try {
-        btnSimpan.innerText = "Menyimpan...";
-        btnSimpan.disabled = true;
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    countdowns.forEach(cd => {
+        const targetDate = new Date(cd.date);
+        targetDate.setHours(0, 0, 0, 0);
         
-        if (data.isVirtual) {
-            // DARI "TIDAK HADIR" (ALPA VIRTUAL) MENJADI STATUS LAIN
-            if (statusBaru !== "Tidak Hadir") {
-                const now = new Date();
-                await addDoc(collection(db, "attendance"), {
-                    namaGuru: data.namaGuru, email: data.email, namaZona: data.namaZona, waktu: jamBaru || "-", status: statusBaru, 
-                    tanggal: data.tanggal, hariStr: data.hariStr, tanggalStr: data.tanggalStr, namaKegiatan: data.namaKegiatan, 
-                    tipeSesi: data.tipeSesi, adminPenanggungJawab: currentUserData.nama + " (Konfirmasi)", timestamp: now.getTime()
-                });
-                alert(`Sukses! Kehadiran ${data.namaGuru} tercatat sebagai ${statusBaru}.`);
+        const diffTime = targetDate - today;
+        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+        
+        let displayStr = diffDays;
+        let labelStr = "HARI LAGI";
+        let colorStr = "#FF6B35";
+
+        if (diffDays === 0) {
+            displayStr = "HARI INI";
+            labelStr = "ACARA TIBA";
+            colorStr = "#217346"; 
+        } else if (diffDays < 0) {
+            displayStr = Math.abs(diffDays);
+            labelStr = "HARI TERLEWAT";
+            colorStr = "#9094A6"; 
+        }
+
+        const card = document.createElement("div");
+        card.className = "countdown-card";
+        card.innerHTML = `
+            <div class="cd-actions">
+                <button class="delete-btn" onclick="deleteCountdown('${cd.id}')" title="Hapus">🗑</button>
+            </div>
+            <h3 class="cd-title">${cd.name}</h3>
+            <span class="cd-date">🎯 ${formatDate(cd.date)}</span>
+            
+            <div class="cd-number-box">
+                <div class="cd-number" style="color: ${colorStr}; font-size: ${isNaN(displayStr) ? '2.5rem' : '4rem'};">${displayStr}</div>
+                <span class="cd-label">${labelStr}</span>
+            </div>
+
+            <button class="btn-export-cd" onclick="exportCountdownExcel('${cd.id}')">
+                📊 Cetak Tracker (Excel)
+            </button>
+        `;
+        content.appendChild(card);
+    });
+}
+
+function openCountdownModal() {
+    document.getElementById("countdownForm").reset();
+    document.getElementById("countdownModal").classList.remove("hidden");
+}
+
+function closeCountdownModal() {
+    document.getElementById("countdownModal").classList.add("hidden");
+}
+
+function deleteCountdown(id) {
+    if(!confirm("Hapus countdown ini?")) return;
+    countdowns = countdowns.filter(c => c.id !== id);
+    saveData();
+    renderCountdowns();
+}
+
+document.getElementById("countdownForm").addEventListener("submit", function(e) {
+    e.preventDefault();
+    const name = document.getElementById("countdownName").value;
+    const date = document.getElementById("countdownDate").value;
+
+    countdowns.push({ 
+        id: Date.now().toString(), 
+        name, 
+        date, 
+        createdAt: new Date().toISOString() 
+    });
+
+    saveData();
+    closeCountdownModal();
+    renderCountdowns();
+});
+
+// ================================
+// EXPORT EXCEL TRACKER COUNTDOWN (DIGABUNG DALAM 1 SHEET / VERTIKAL)
+// ================================
+function exportCountdownExcel(id) {
+    const cd = countdowns.find(c => c.id === id);
+    if (!cd) return;
+
+    const startDate = new Date(cd.createdAt);
+    startDate.setHours(0,0,0,0);
+    const endDate = new Date(cd.date);
+    endDate.setHours(0,0,0,0);
+
+    if (endDate < startDate) {
+        alert("Tanggal target sudah terlewat saat countdown dibuat.");
+        return;
+    }
+
+    const months = ["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember"];
+    
+    // 1. Inisialisasi Data Utama untuk 1 Sheet
+    let wsData = [
+        [`HABIT TRACKER: ${cd.name.toUpperCase()}`],
+        [`Total Hari / Rentang: ${formatDate(cd.createdAt)} s/d ${formatDate(cd.date)}`],
+        [] // Baris kosong sebagai spasi
+    ];
+
+    let merges = [
+        { s: { r: 0, c: 0 }, e: { r: 0, c: 6 } }, // Judul utama merge kolom A-G
+        { s: { r: 1, c: 0 }, e: { r: 1, c: 6 } }  // Subtitle merge kolom A-G
+    ];
+    
+    let rowHeights = [
+        { hpt: 30 }, // Baris 0: Judul
+        { hpt: 20 }, // Baris 1: Subtitle
+        { hpt: 15 }  // Baris 2: Spasi
+    ];
+
+    let currentRow = 3; // Penanda indeks baris saat ini
+
+    let currIter = new Date(startDate.getFullYear(), startDate.getMonth(), 1);
+    const finalLimit = new Date(endDate.getFullYear(), endDate.getMonth(), 1);
+
+    // Loop otomatis untuk setiap bulan dan susun secara vertikal ke bawah
+    while (currIter <= finalLimit) {
+        let targetYear = currIter.getFullYear();
+        let targetMonth = currIter.getMonth();
+        let monthName = months[targetMonth];
+
+        // Baris Header Nama Bulan (Misal: SEPTEMBER 2026)
+        wsData.push([`${monthName.toUpperCase()} ${targetYear}`]);
+        merges.push({ s: { r: currentRow, c: 0 }, e: { r: currentRow, c: 6 } });
+        rowHeights.push({ hpt: 30 });
+        currentRow++;
+
+        // Baris Nama Hari
+        wsData.push(["Minggu", "Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu"]);
+        rowHeights.push({ hpt: 25 });
+        currentRow++;
+
+        // Grid Tanggal Bulan Ini
+        const firstDay = new Date(targetYear, targetMonth, 1).getDay();
+        const daysInMonth = new Date(targetYear, targetMonth + 1, 0).getDate();
+
+        let currentWeek = [];
+        for (let i = 0; i < firstDay; i++) {
+            currentWeek.push("");
+        }
+
+        for (let day = 1; day <= daysInMonth; day++) {
+            const currentDate = new Date(targetYear, targetMonth, day);
+            currentDate.setHours(0,0,0,0);
+            
+            let cellContent = `${day}`;
+            if (currentDate >= startDate && currentDate <= endDate) {
+                cellContent += `\n[   ] Target`;
             }
-        } else {
-            // MENGEDIT DATA YANG SUDAH ADA DI CLOUD
-            if (statusBaru === "Tidak Hadir") {
-                if(confirm("Yakin ubah ke TIDAK HADIR? Riwayat absen ini akan DIHAPUS dari server.")) {
-                    await deleteDoc(doc(db, "attendance", data.docId));
-                    alert(`Data dihapus. ${data.namaGuru} kembali berstatus Tidak Hadir.`);
-                } else {
-                    btnSimpan.innerText = "Simpan"; btnSimpan.disabled = false;
-                    return;
-                }
+
+            currentWeek.push(cellContent);
+
+            if (currentWeek.length === 7) {
+                wsData.push(currentWeek);
+                rowHeights.push({ hpt: 90 }); // Tinggi kotak tanggal kalender
+                currentRow++;
+                currentWeek = [];
+            }
+        }
+
+        if (currentWeek.length > 0) {
+            while (currentWeek.length < 7) {
+                currentWeek.push("");
+            }
+            wsData.push(currentWeek);
+            rowHeights.push({ hpt: 90 });
+            currentRow++;
+        }
+
+        // Berikan jarak 2 baris kosong sebelum masuk ke bulan berikutnya
+        wsData.push([]);
+        wsData.push([]);
+        rowHeights.push({ hpt: 15 }, { hpt: 15 });
+        currentRow += 2;
+
+        currIter.setMonth(currIter.getMonth() + 1);
+    }
+
+    // 2. Buat Worksheet & Terapkan Pengaturan Layout
+    const ws = XLSX.utils.aoa_to_sheet(wsData);
+    ws['!merges'] = merges;
+    ws['!cols'] = Array(7).fill({ wch: 18 });
+    ws['!rows'] = rowHeights;
+
+    // 3. Styling Border dan Pewarnaan
+    const borderStyle = {
+        top: { style: "medium", color: { rgb: "000000" } },
+        bottom: { style: "medium", color: { rgb: "000000" } },
+        left: { style: "medium", color: { rgb: "000000" } },
+        right: { style: "medium", color: { rgb: "000000" } }
+    };
+
+    for (let R = 0; R < wsData.length; ++R) {
+        let rowData = wsData[R];
+        // Lewati baris yang benar-benar kosong (spasi antar bulan)
+        if (!rowData || rowData.length === 0 || rowData.every(val => val === "")) {
+            continue;
+        }
+
+        for (let C = 0; C < 7; ++C) {
+            let cellAddress = XLSX.utils.encode_cell({r: R, c: C});
+            if (!ws[cellAddress]) ws[cellAddress] = { t: 's', v: '' };
+
+            if (R === 0) {
+                // Judul Utama
+                ws[cellAddress].s = { font: { bold: true, sz: 14, color: { rgb: "FF6B35" } }, alignment: { horizontal: "center", vertical: "center" } };
+            } else if (R === 1) {
+                // Subtitle
+                ws[cellAddress].s = { font: { bold: true, sz: 11, color: { rgb: "64748b" } }, alignment: { horizontal: "center", vertical: "center" } };
             } else {
-                await updateDoc(doc(db, "attendance", data.docId), {
-                    status: statusBaru,
-                    waktu: jamBaru || "-",
-                    adminPenanggungJawab: currentUserData.nama + " (Update)"
-                });
-                alert(`Sukses! Status ${data.namaGuru} diperbarui.`);
+                // Cek apakah baris ini adalah header nama bulan
+                if (rowData.length === 1 && rowData[0] && typeof rowData[0] === 'string' && months.some(m => rowData[0].toUpperCase().includes(m.toUpperCase()))) {
+                    ws[cellAddress].s = { font: { bold: true, sz: 13, color: { rgb: "FFFFFF" } }, fill: { fgColor: { rgb: "0F766E" } }, alignment: { horizontal: "center", vertical: "center" }, border: borderStyle };
+                } else if (rowData[0] === "Minggu" && rowData[1] === "Senin") {
+                    // Header Hari (Minggu - Sabtu)
+                    ws[cellAddress].s = { font: { bold: true, color: { rgb: "FFFFFF" } }, fill: { fgColor: { rgb: "2D3142" } }, alignment: { horizontal: "center", vertical: "center" }, border: borderStyle };
+                } else {
+                    // Kotak Tanggal Kalender
+                    ws[cellAddress].s = { 
+                        alignment: { horizontal: "left", vertical: "top", wrapText: true }, 
+                        border: borderStyle,
+                        font: { sz: 10, color: { rgb: "2D3142" } } 
+                    };
+                }
             }
         }
-        
-        window.closeModalStatus();
-        renderRekap(); // Refresh tabel
-    } catch (error) {
-        alert("Gagal memperbarui status: " + error.message);
-    } finally {
-        btnSimpan.innerText = "Simpan";
-        btnSimpan.disabled = false;
-    }
-};
-
-window.applyFilters = () => {
-    const fTanggal = document.getElementById("filter-tanggal").value;
-    const fJam = document.getElementById("filter-jam").value.toLowerCase();
-    const fKegiatan = document.getElementById("filter-kegiatan").value.toLowerCase();
-    const fTahap = document.getElementById("filter-tahap").value.toLowerCase();
-    const fNama = document.getElementById("filter-nama").value.toLowerCase();
-    const fZona = document.getElementById("filter-zona").value.toLowerCase();
-    const fStatus = document.getElementById("filter-status").value.toLowerCase();
-    const fAdmin = document.getElementById("filter-admin").value.toLowerCase();
-
-    filteredRekapData = allRekapData.filter(d => {
-        const matchTanggal = !fTanggal || d.tanggal === fTanggal; 
-        const matchJam = !fJam || (d.waktu && d.waktu.toLowerCase().includes(fJam));
-        const matchKegiatan = !fKegiatan || (d.namaKegiatan && d.namaKegiatan.toLowerCase().includes(fKegiatan));
-        const matchTahap = !fTahap || (d.tipeSesi && d.tipeSesi.toLowerCase().includes(fTahap));
-        const matchNama = !fNama || (d.namaGuru && d.namaGuru.toLowerCase().includes(fNama));
-        const matchZona = !fZona || (d.namaZona && d.namaZona.toLowerCase().includes(fZona));
-        const matchStatus = !fStatus || (d.status && d.status.toLowerCase().includes(fStatus));
-        const matchAdmin = !fAdmin || (d.adminPenanggungJawab && d.adminPenanggungJawab.toLowerCase().includes(fAdmin));
-
-        return matchTanggal && matchJam && matchKegiatan && matchTahap && matchNama && matchZona && matchStatus && matchAdmin;
-    });
-
-    drawRekapTable(filteredRekapData);
-};
-
-// --- RENDER TABEL REKAP & LOGIKA CHECKBOX HAPUS ---
-function drawRekapTable(data) {
-    const tbody = document.getElementById("body-rekap");
-    tbody.innerHTML = "";
-    
-    // Reset status "Check All" & sembunyikan tombol Hapus Masal tiap kali tabel dimuat ulang
-    const checkAll = document.getElementById("check-all");
-    if(checkAll) checkAll.checked = false;
-    if(document.getElementById("btn-bulk-delete")) document.getElementById("btn-bulk-delete").classList.add("hidden");
-
-    if (data.length === 0) {
-        tbody.innerHTML = "<tr><td colspan='10' style='text-align:center; padding:20px;'>Tidak ada data yang sesuai dengan kriteria filter.</td></tr>";
-        return;
     }
 
-    data.forEach((d, index) => {
-        let badgeStyle = "";
-        if (d.status === 'Tepat Waktu') badgeStyle = "background:#d1fae5; color:#059669;";
-        else if (d.status === 'Terlambat') badgeStyle = "background:#ffedd5; color:#ea580c;";
-        else if (d.status === 'Izin' || d.status === 'Sakit') badgeStyle = "background:#fef08a; color:#a16207;"; 
-        else badgeStyle = "background:#fee2e2; color:#dc2626;"; 
-
-        // Kunci Checkbox & Tombol Hapus jika data adalah Virtual (Sudah Tidak Hadir)
-        const isVirtual = d.isVirtual;
-        const checkboxHTML = isVirtual ? `<input type="checkbox" disabled style="opacity: 0.3;">` : `<input type="checkbox" class="check-rekap" value="${index}" onchange="updateBulkDeleteButton()" style="transform: scale(1.2); cursor: pointer;">`;
-        const btnHapusHTML = isVirtual ? 
-            `<button disabled style="background:#fca5a5; color:#fff; border:none; padding:5px 8px; border-radius:6px; font-size:0.75rem; cursor:not-allowed; opacity: 0.7;">Hapus</button>` : 
-            `<button onclick="hapusSatuRekap(${index})" style="background:#dc2626; color:#fff; border:none; padding:5px 8px; border-radius:6px; cursor:pointer; font-size:0.75rem;">Hapus</button>`;
-
-        tbody.innerHTML += `<tr>
-            <td style="text-align: center;">${checkboxHTML}</td>
-            <td><strong>${d.hariStr}</strong>, ${d.tanggalStr}</td>
-            <td>${d.waktu}</td>
-            <td><strong>${d.namaKegiatan}</strong></td>
-            <td><span style="background:#eef2ff; color:#4f46e5; padding:3px 8px; border-radius:4px; font-size:0.85rem;">${d.tipeSesi}</span></td>
-            <td><strong>${d.namaGuru}</strong></td>
-            <td>${d.namaZona}</td>
-            <td><span class="badge" style="${badgeStyle}">${d.status}</span></td>
-            <td>${d.adminPenanggungJawab}</td>
-            <td>
-                <button onclick="ubahStatusRekap(${index})" style="background:#6366f1; color:#fff; border:none; padding:5px 8px; border-radius:6px; cursor:pointer; font-size:0.75rem; margin-right: 2px; margin-bottom: 2px;">Ubah</button>
-                ${btnHapusHTML}
-            </td>
-        </tr>`;
-    });
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Habit Tracker");
+    XLSX.writeFile(wb, `Kalender_Habit_${cd.name.replace(/\s+/g, '_')}.xlsx`);
 }
 
-// Fitur Centang Semua Checkbox
-window.toggleCheckAll = () => {
-    const checkAll = document.getElementById("check-all");
-    const checkboxes = document.querySelectorAll('.check-rekap:not([disabled])');
-    checkboxes.forEach(cb => cb.checked = checkAll.checked);
-    updateBulkDeleteButton();
-};
-
-// Fitur Update Angka di Tombol Hapus Masal
-window.updateBulkDeleteButton = () => {
-    const checkedCount = document.querySelectorAll('.check-rekap:checked').length;
-    const btn = document.getElementById("btn-bulk-delete");
-    if (checkedCount > 0) {
-        btn.classList.remove("hidden");
-        btn.innerText = `Hapus Terpilih (${checkedCount})`;
-    } else {
-        btn.classList.add("hidden");
-    }
-};
-
-// LOGIKA 1: Hapus Satu Data Rekap
-window.hapusSatuRekap = async (index) => {
-    if (currentUserData.role !== "ADMIN") return alert("Akses Ditolak!");
-    const data = filteredRekapData[index];
-    
-    if (confirm(`Yakin ingin MENGHAPUS riwayat kehadiran untuk ${data.namaGuru}?\n(Status absensinya pada kegiatan ini akan kembali menjadi "Tidak Hadir")`)) {
-        try {
-            await deleteDoc(doc(db, "attendance", data.docId));
-            alert("Satu data kehadiran berhasil dihapus.");
-            renderRekap();
-        } catch (error) {
-            alert("Gagal menghapus: " + error.message);
+// ================================
+// NAVIGATION HANDLER & INIT
+// ================================
+document.querySelectorAll(".nav-item").forEach(button => {
+    button.addEventListener("click", function() {
+        document.querySelectorAll(".nav-item").forEach(item => item.classList.remove("active"));
+        this.classList.add("active");
+        
+        // REVISI: Bersihkan pengaturan filter saat berganti menu
+        specialSortOrder = 'asc';
+        specialFilterDate = '';
+        
+        const page = this.dataset.page;
+        if (page === "dashboard") {
+            const actionBtn = document.querySelector(".header .btn-primary");
+            actionBtn.innerText = "+ Tambah Agenda";
+            actionBtn.onclick = openAgendaModal;
+            renderDashboard();
         }
-    }
-};
-
-// LOGIKA 2: Hapus Banyak Data Rekap Sekaligus (Batch Delete)
-window.hapusBanyakRekap = async () => {
-    if (currentUserData.role !== "ADMIN") return alert("Akses Ditolak!");
-    
-    const checkboxes = document.querySelectorAll('.check-rekap:checked');
-    if (checkboxes.length === 0) return;
-
-    if (confirm(`PERINGATAN TINGKAT TINGGI:\nAnda akan menghapus ${checkboxes.length} data kehadiran secara permanen!\n\nSemua guru yang Anda centang akan kembali berstatus "Tidak Hadir". Apakah Anda yakin?`)) {
-        const btn = document.getElementById("btn-bulk-delete");
-        btn.innerText = "Menghapus...";
-        btn.disabled = true;
-        
-        try {
-            const batch = writeBatch(db); // Menggunakan fitur Batch dari Firebase agar super cepat
-            let count = 0;
-            
-            checkboxes.forEach(cb => {
-                const index = parseInt(cb.value);
-                const data = filteredRekapData[index];
-                if (!data.isVirtual && data.docId) {
-                    batch.delete(doc(db, "attendance", data.docId));
-                    count++;
-                }
-            });
-            
-            if (count > 0) {
-                await batch.commit();
-                alert(`${count} data kehadiran berhasil dihapus secara masal!`);
-                renderRekap();
-            }
-        } catch (error) {
-            alert("Gagal menghapus data masal: " + error.message);
-        } finally {
-            btn.disabled = false;
+        else if (page === "agenda") {
+            const actionBtn = document.querySelector(".header .btn-primary");
+            actionBtn.innerText = "+ Tambah Agenda";
+            actionBtn.onclick = openAgendaModal;
+            renderAgendas();
         }
+        else if (page === "timeline") {
+            const actionBtn = document.querySelector(".header .btn-primary");
+            actionBtn.innerText = "+ Tambah Agenda";
+            actionBtn.onclick = openAgendaModal;
+            renderTimeline(); 
+        }
+        else if (page === "all-targets") {
+            const actionBtn = document.querySelector(".header .btn-primary");
+            actionBtn.innerText = "+ Tambah Agenda";
+            actionBtn.onclick = openAgendaModal;
+            renderSpecialPage('all-targets');
+        }
+        else if (page === "priority") {
+            const actionBtn = document.querySelector(".header .btn-primary");
+            actionBtn.innerText = "+ Tambah Agenda";
+            actionBtn.onclick = openAgendaModal;
+            renderSpecialPage('priority');
+        }
+        else if (page === "completed") {
+            const actionBtn = document.querySelector(".header .btn-primary");
+            actionBtn.innerText = "+ Tambah Agenda";
+            actionBtn.onclick = openAgendaModal;
+            renderSpecialPage('completed');
+        }
+        else if (page === "archive") {
+            const actionBtn = document.querySelector(".header .btn-primary");
+            actionBtn.innerText = "+ Tambah Agenda";
+            actionBtn.onclick = openAgendaModal;
+            renderArchive(); 
+        }
+        else if (page === "countdown") {
+            renderCountdowns(); 
+        }
+    });
+});
+
+window.addEventListener('resize', () => {
+    if (document.getElementById("pageTitle").innerText === "Timeline Agenda") {
+        fixTimelineLines();
     }
-};
+});
 
-window.resetFilters = () => {
-    document.getElementById("filter-tanggal").value = "";
-    document.getElementById("filter-jam").value = "";
-    document.getElementById("filter-kegiatan").value = "";
-    document.getElementById("filter-tahap").value = "";
-    document.getElementById("filter-nama").value = "";
-    document.getElementById("filter-zona").value = "";
-    document.getElementById("filter-status").value = "";
-    document.getElementById("filter-admin").value = "";
-    
-    window.applyFilters(); 
-};
-
-window.exportRekapToExcel = async () => {
-    try {
-        if (filteredRekapData.length === 0) return alert("Peringatan: Tidak ada data hasil filter yang bisa di-export!");
-        
-        const btn = document.querySelector("#page-rekap .btn-secondary");
-        btn.innerText = "Mengekspor...";
-
-        let dataExport = filteredRekapData.map((d, index) => ({
-            "No": index + 1, 
-            "Hari": d.hariStr, 
-            "Tanggal": d.tanggalStr, 
-            "Jam Absen": d.waktu, 
-            "Nama Kegiatan": d.namaKegiatan, 
-            "Tahap Absensi": d.tipeSesi, 
-            "Nama Guru": d.namaGuru, 
-            "Zona": d.namaZona, 
-            "Status": d.status, 
-            "Admin Bertugas": d.adminPenanggungJawab
-        }));
-
-        const ws = XLSX.utils.json_to_sheet(dataExport);
-        const wb = XLSX.utils.book_new();
-        XLSX.utils.book_append_sheet(wb, ws, "Rekap Absensi");
-        XLSX.writeFile(wb, "Rekap_EduAbsen_Filtered.xlsx");
-        
-        btn.innerText = "Export ke Excel (Sesuai Filter)";
-    } catch (error) { 
-        alert("Gagal export: " + error.message); 
-        document.querySelector("#page-rekap .btn-secondary").innerText = "Export ke Excel (Sesuai Filter)";
-    }
-};
-
-setInterval(() => {
-    const now = new Date();
-    const timeEl = document.getElementById("current-time");
-    const dateEl = document.getElementById("current-date");
-    if (timeEl) timeEl.innerText = now.toLocaleTimeString('id-ID') + " WIB";
-    if (dateEl) dateEl.innerText = now.toLocaleDateString('id-ID', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
-}, 1000);
-
-initSystem();
-checkLoginStatus();
+renderDashboard();
