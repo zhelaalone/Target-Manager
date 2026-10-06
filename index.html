@@ -139,14 +139,15 @@
         </div>
     </div>
 
-    <script src="script.js"></script>
-
-    <!-- ... KODE HTML ANDA SEBELUMNYA (MODAL DLL) ... -->
-
-    <!-- Tambahkan library SheetJS untuk fitur Export Excel -->
-    <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
     
-    <!-- Script utama Anda -->
+    <!-- Script untuk Export Excel yang sudah Anda buat -->
+    <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
+
+    <!-- TAMBAHKAN KEDUA SCRIPT FIREBASE INI (Gunakan versi 8.10.1 agar sesuai dengan sintaks app.js) -->
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-firestore.js"></script>
+
+    <!-- Script utama aplikasi Anda (Pastikan posisinya di paling bawah) -->
     <script src="app.js"></script>
 </body>
 </html>
