@@ -1,33 +1,91 @@
 // ================================
-// DATA & STATE MANAGEMENT
+// FIREBASE SETUP & STATE MANAGEMENT
 // ================================
-let agendas = JSON.parse(localStorage.getItem("targetManager")) || [];
+const firebaseConfig = {
+    apiKey: "AIzaSyDahgl-hfNXQAtzwoEqcuOnY_r1_ahrMkQ",
+    authDomain: "laskdjfal.firebaseapp.com",
+    projectId: "laskdjfal",
+    storageBucket: "laskdjfal.firebasestorage.app",
+    messagingSenderId: "554093192431",
+    appId: "1:554093192431:web:03660e4de40fbff760271a"
+};
+
+// Inisialisasi Firebase
+firebase.initializeApp(firebaseConfig);
+const db = firebase.firestore();
+
+// Konstanta umum
+const MONTHS = [
+    "Januari", "Februari", "Maret", "April", "Mei", "Juni",
+    "Juli", "Agustus", "September", "Oktober", "November", "Desember"
+];
+const DAY_NAMES = ["Minggu", "Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu"];
+const MS_PER_DAY = 1000 * 60 * 60 * 24;
+
+// State awal dikosongkan
+let agendas = [];
+let countdowns = [];
 let currentAgendaId = null;
 let currentCalMonth = new Date().getMonth();
 let currentCalYear = new Date().getFullYear();
 let selectedFilterDate = null;
-let countdowns = JSON.parse(localStorage.getItem("tm_countdowns")) || [];
 
-// Variabel Memori Filter untuk Halaman Rekap Target
+// Variabel memori filter untuk halaman rekap target
 let specialSortOrder = 'asc';
 let specialFilterDate = '';
-let specialFilterStatus = 'all'; // Status: all, pending, completed
-let specialFilterPriority = 'all'; // Prioritas: all, priority, normal
+let specialFilterStatus = 'all';
+let specialFilterPriority = 'all';
+
+// Tarik data dari Firestore saat web dimuat
+db.collection("appData").doc("targetManager").get().then((doc) => {
+    if (doc.exists) {
+        const data = doc.data();
+        agendas = data.agendas || [];
+        countdowns = data.countdowns || [];
+    }
+    // Render dashboard HANYA setelah data berhasil dimuat
+    renderDashboard();
+}).catch(error => {
+    console.error("Gagal mengambil data dari Firebase:", error);
+    renderDashboard(); // Fallback render jika offline
+});
 
 
 // ================================
-// SAVE DATA & FORMAT DATE
+// SAVE DATA TO FIREBASE
 // ================================
 function saveData() {
-    localStorage.setItem("targetManager", JSON.stringify(agendas));
-    localStorage.setItem("tm_countdowns", JSON.stringify(countdowns));
+    db.collection("appData").doc("targetManager").set({
+        agendas: agendas,
+        countdowns: countdowns
+    }).then(() => {
+        console.log("Data berhasil disinkronisasi ke Firebase.");
+    }).catch((error) => {
+        console.error("Error saat menyimpan data: ", error);
+    });
 }
 
+
+// ================================
+// HELPERS
+// ================================
 function formatDate(date) {
     if (!date) return "-";
     return new Date(date).toLocaleDateString("id-ID", {
         day: "numeric", month: "long", year: "numeric"
     });
+}
+
+// Format Date -> "YYYY-MM-DD" (sesuai format input type="date")
+function toDateString(year, monthIndex, day) {
+    const mm = String(monthIndex + 1).padStart(2, '0');
+    const dd = String(day).padStart(2, '0');
+    return `${year}-${mm}-${dd}`;
+}
+
+function getTodayDateString() {
+    const today = new Date();
+    return toDateString(today.getFullYear(), today.getMonth(), today.getDate());
 }
 
 function getCountdownText(dateString) {
@@ -37,8 +95,7 @@ function getCountdownText(dateString) {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
-    const diffTime = targetDate - today;
-    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+    const diffDays = Math.ceil((targetDate - today) / MS_PER_DAY);
 
     if (diffDays === 0) return "Hari Ini!";
     if (diffDays === 1) return "Besok";
@@ -47,20 +104,106 @@ function getCountdownText(dateString) {
     return "-";
 }
 
+// Ubah teks & aksi tombol utama di header
+function setHeaderAction(label, handler) {
+    const actionBtn = document.querySelector(".header .btn-primary");
+    actionBtn.innerText = label;
+    actionBtn.onclick = handler;
+}
+
+// Ambil semua target (agenda aktif) sesuai tipe halaman + semua filter yang aktif.
+// Dipakai bersama oleh tampilan rekap dan export Excel.
+function getFilteredTargets(type) {
+    let result = [];
+
+    agendas.filter(a => !a.isArchived).forEach(agenda => {
+        agenda.targets.forEach(target => {
+            const include =
+                (type === 'priority' && target.priority && !target.completed) ||
+                (type === 'completed' && target.completed) ||
+                (type === 'all-targets');
+
+            if (include) {
+                result.push({ ...target, agendaName: agenda.name, agendaId: agenda.id });
+            }
+        });
+    });
+
+    // Filter status & prioritas (khusus tab Semua Target)
+    if (type === 'all-targets') {
+        if (specialFilterStatus === 'completed') result = result.filter(t => t.completed);
+        else if (specialFilterStatus === 'pending') result = result.filter(t => !t.completed);
+
+        if (specialFilterPriority === 'priority') result = result.filter(t => t.priority);
+        else if (specialFilterPriority === 'normal') result = result.filter(t => !t.priority);
+    }
+
+    // Filter tanggal
+    if (specialFilterDate) {
+        result = result.filter(t => t.deadline === specialFilterDate);
+    }
+
+    // Pengurutan
+    result.sort((a, b) => {
+        const dateA = a.deadline ? new Date(a.deadline).getTime() : Infinity;
+        const dateB = b.deadline ? new Date(b.deadline).getTime() : Infinity;
+        return specialSortOrder === 'asc' ? dateA - dateB : dateB - dateA;
+    });
+
+    return result;
+}
+
+
+// ================================
+// HELPER: UI TARGET HARI INI
+// ================================
+function generateTodayTargetsHTML(todayTargets) {
+    // Jangan tampilkan kotak jika tidak ada target hari ini
+    if (todayTargets.length === 0) return "";
+
+    const itemsHTML = todayTargets.map(target => {
+        const timeDisplay = target.time ? ` ⏰ ${target.time}` : "";
+        return `
+            <div class="target-item">
+                <div class="target-left">
+                    <input type="checkbox" onchange="toggleTarget('${target.agendaId}', '${target.id}', 'dashboard')">
+                    <div>
+                        <h3>${target.name}</h3>
+                        <p>📁 ${target.agendaName}</p>
+                    </div>
+                </div>
+                <div class="target-right">
+                    <span class="priority-badge">Hari Ini${timeDisplay}</span>
+                </div>
+            </div>
+        `;
+    }).join('');
+
+    return `
+        <div style="background:#F0FDF4; border:1px solid #BBF7D0; border-radius:16px; padding:1.2rem 1.5rem; margin-bottom:1.5rem;">
+            <h3 style="color:#166534; margin-bottom:1rem;">🎯 Fokus Hari Ini: ${todayTargets.length} Target</h3>
+            <div style="display:flex; flex-direction:column; gap:0.8rem;">${itemsHTML}</div>
+        </div>
+    `;
+}
+
+
 // ================================
 // HALAMAN DASHBOARD
 // ================================
 function renderDashboard() {
     document.getElementById("pageTitle").innerText = "Dashboard";
     document.getElementById("pageSubtitle").innerText = "Ringkasan progress target dan agenda Anda.";
-    
+
     const content = document.getElementById("content");
     content.style.display = "block";
 
     const today = new Date();
-    today.setHours(0, 0, 0, 0); 
+    today.setHours(0, 0, 0, 0);
+    const todayString = getTodayDateString();
 
-    let overdueTargets = [];
+    const overdueTargets = [];
+    const todayTargets = [];
     let totalTargets = 0;
     let completedCount = 0;
 
@@ -74,86 +217,85 @@ function renderDashboard() {
             if (!target.completed && target.deadline) {
                 const deadlineDate = new Date(target.deadline);
                 deadlineDate.setHours(0, 0, 0, 0);
-                
+
+                // Target terlewat (overdue)
                 if (deadlineDate < today) {
-                    overdueTargets.push({
-                        ...target,
-                        agendaName: agenda.name,
-                        agendaId: agenda.id
-                    });
+                    overdueTargets.push({ ...target, agendaName: agenda.name, agendaId: agenda.id });
+                }
+
+                // Target hari ini
+                if (target.deadline === todayString) {
+                    todayTargets.push({ ...target, agendaName: agenda.name, agendaId: agenda.id });
                 }
             }
         });
     });
 
+    // Overdue diurutkan berdasarkan tanggal, target hari ini berdasarkan jam
     overdueTargets.sort((a, b) => new Date(a.deadline) - new Date(b.deadline));
+    todayTargets.sort((a, b) => (a.time || "24:00").localeCompare(b.time || "24:00"));
 
     let overdueHTML = "";
     if (overdueTargets.length > 0) {
-        overdueHTML = `
-            <div style="background: #fff1f2; border-left: 5px solid #e11d48; padding: 1.25rem; border-radius: 12px; margin-bottom: 2rem; box-shadow: 0 4px 15px rgba(225, 29, 72, 0.06);">
-                <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 1rem;">
-                    <h3 style="color: #be123c; margin: 0; font-size: 1.05rem; display: flex; align-items: center; gap: 0.5rem;">
-                        ⚠️ Perhatian: ${overdueTargets.length} Target Melewati Deadline!
-                    </h3>
-                </div>
-                <div style="display: flex; flex-direction: column; gap: 0.75rem;">
-                    ${overdueTargets.map(target => {
-                        const timeDisplay = target.time ? ` ⏰ ${target.time}` : "";
-                        return `
-                        <div style="display: flex; align-items: center; justify-content: space-between; background: #ffffff; padding: 0.75rem 1rem; border-radius: 8px; border: 1px solid #fecdd3;">
-                            <div style="display: flex; align-items: center; gap: 0.75rem;">
-                                <input type="checkbox" onchange="toggleTarget('${target.agendaId}', '${target.id}', 'dashboard')">
-                                <div>
-                                    <strong style="color: #1e293b; display: block; font-size: 0.95rem;">${target.name}</strong>
-                                    <span style="font-size: 0.8rem; color: #64748b;">📁 ${target.agendaName}</span>
-                                </div>
-                            </div>
-                            <span style="background: #ffe4e6; color: #e11d48; font-size: 0.78rem; font-weight: 600; padding: 4px 10px; border-radius: 20px;">
-                                Terlewat: ${formatDate(target.deadline)}${timeDisplay}
-                            </span>
+        const overdueItemsHTML = overdueTargets.map(target => {
+            const timeDisplay = target.time ? ` ⏰ ${target.time}` : "";
+            return `
+                <div class="target-item">
+                    <div class="target-left">
+                        <input type="checkbox" onchange="toggleTarget('${target.agendaId}', '${target.id}', 'dashboard')">
+                        <div>
+                            <h3>${target.name}</h3>
+                            <p>📁 ${target.agendaName}</p>
                         </div>
-                        `;
-                    }).join('')}
+                    </div>
+                    <div class="target-right">
+                        <span class="priority-badge" style="background:#FFF0F0; color:#FF4D4D;">Terlewat: ${formatDate(target.deadline)}${timeDisplay}</span>
+                    </div>
                 </div>
+            `;
+        }).join('');
+
+        overdueHTML = `
+            <div style="background:#FFF5F5; border:1px solid #FECACA; border-radius:16px; padding:1.2rem 1.5rem; margin-bottom:1.5rem;">
+                <h3 style="color:#B91C1C; margin-bottom:1rem;">⚠️ Perhatian: ${overdueTargets.length} Target Melewati Deadline!</h3>
+                <div style="display:flex; flex-direction:column; gap:0.8rem;">${overdueItemsHTML}</div>
             </div>
         `;
     }
 
+    const todayHTML = generateTodayTargetsHTML(todayTargets);
+
     const progressPercent = totalTargets > 0 ? Math.round((completedCount / totalTargets) * 100) : 0;
 
-    const statsHTML = `
-        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1.5rem; margin-bottom: 2rem;">
-            <div style="background: #fff; padding: 1.5rem; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.03);">
-                <span style="color: #64748b; font-size: 0.85rem;">Total Agenda Aktif</span>
-                <h2 style="margin: 0.5rem 0 0; color: #1e293b; font-size: 1.8rem;">${activeAgendas.length}</h2>
-            </div>
-            <div style="background: #fff; padding: 1.5rem; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.03);">
-                <span style="color: #64748b; font-size: 0.85rem;">Total Target</span>
-                <h2 style="margin: 0.5rem 0 0; color: #1e293b; font-size: 1.8rem;">${totalTargets}</h2>
-            </div>
-            <div style="background: #fff; padding: 1.5rem; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.03);">
-                <span style="color: #64748b; font-size: 0.85rem;">Target Selesai</span>
-                <h2 style="margin: 0.5rem 0 0; color: #217346; font-size: 1.8rem;">${completedCount}</h2>
-            </div>
-            <div style="background: #fff; padding: 1.5rem; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.03);">
-                <span style="color: #64748b; font-size: 0.85rem;">Progress Keseluruhan</span>
-                <h2 style="margin: 0.5rem 0 0; color: #2563eb; font-size: 1.8rem;">${progressPercent}%</h2>
-            </div>
+    const statCard = (label, value) => `
+        <div style="background:#fff; border-radius:16px; padding:1.5rem; box-shadow:0 4px 15px rgba(0,0,0,0.04);">
+            <p style="font-size:0.85rem; color:#9094A6; font-weight:600; margin-bottom:0.5rem;">${label}</p>
+            <h2 style="font-size:2rem; color:#2D3142;">${value}</h2>
         </div>
     `;
 
-    content.innerHTML = overdueHTML + statsHTML;
+    const statsHTML = `
+        <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(200px, 1fr)); gap:1.2rem;">
+            ${statCard("Total Agenda Aktif", activeAgendas.length)}
+            ${statCard("Total Target", totalTargets)}
+            ${statCard("Target Selesai", completedCount)}
+            ${statCard("Progress Keseluruhan", progressPercent + "%")}
+        </div>
+    `;
+
+    // Urutan: Overdue (paling atas) -> Target Hari Ini -> Statistik
+    content.innerHTML = overdueHTML + todayHTML + statsHTML;
 }
 
+
 // ================================
-// RENDER DAFTAR AGENDA 
+// RENDER DAFTAR AGENDA
 // ================================
 function renderAgendas() {
     document.getElementById("pageTitle").innerText = "Semua Agenda";
     document.getElementById("pageSubtitle").innerText = "Kelola agenda dan target pekerjaan Anda.";
     const content = document.getElementById("content");
-    content.style.display = "grid"; 
+    content.style.display = "grid";
     content.innerHTML = "";
 
     const activeAgendas = agendas.filter(a => !a.isArchived);
@@ -175,7 +317,7 @@ function renderAgendas() {
         const pendingTargets = agenda.targets
             .filter(t => !t.completed && t.deadline)
             .sort((a, b) => new Date(a.deadline) - new Date(b.deadline))
-            .slice(0, 3); 
+            .slice(0, 3);
 
         let miniTargetHTML = "";
         if (pendingTargets.length > 0) {
@@ -186,7 +328,7 @@ function renderAgendas() {
                         const tCountdown = getCountdownText(t.deadline);
                         const isTOverdue = tCountdown.includes("Terlewat");
                         const timeDisplay = t.time ? ` (${t.time})` : "";
-                        
+
                         return `
                         <div class="mini-target-item">
                             <span class="mini-target-name" title="${t.name}">${t.priority ? '⭐ ' : ''}${t.name}${timeDisplay}</span>
@@ -208,25 +350,25 @@ function renderAgendas() {
                 <div style="width: 100%;">
                     <div style="display:flex; justify-content:space-between; align-items:flex-start;">
                         <h2 style="margin-right:10px;">${agenda.name}</h2>
-                        
+
                         <div style="display: flex; gap: 0.5rem; align-items:flex-start; flex-shrink:0;">
                             <button class="edit-btn" onclick="openEditAgenda(event, '${agenda.id}')" style="background:#FFF0E5; color:#FF6B35; border:none; width:32px; height:32px; border-radius:8px; cursor:pointer; display:flex; align-items:center; justify-content:center;" title="Edit">✏️</button>
                             <button onclick="toggleArchive(event, '${agenda.id}')" style="background:#EBF5FF; color:#3B82F6; border:none; width:32px; height:32px; border-radius:8px; cursor:pointer; display:flex; align-items:center; justify-content:center;" title="Arsipkan">📦</button>
                             <button class="delete-btn" onclick="deleteAgenda(event, '${agenda.id}')" style="width:32px; height:32px; border-radius:8px; display:flex; align-items:center; justify-content:center;" title="Hapus">🗑</button>
                         </div>
                     </div>
-                    
+
                     <div style="display:flex; align-items:center; gap: 10px; margin: 0.5rem 0;">
                         <span class="countdown-badge ${isAgendaOverdue ? 'overdue' : ''}">
                             ⏱️ ${agendaCountdown}
                         </span>
                         <span style="font-size:0.8rem; color:#9094A6;">(${formatDate(agenda.date)})</span>
                     </div>
-                    
+
                     <p>${agenda.description || "Tidak ada deskripsi"}</p>
                 </div>
             </div>
-            
+
             ${miniTargetHTML}
 
             <div class="agenda-info" style="margin-top:auto;">
@@ -243,6 +385,7 @@ function renderAgendas() {
     });
 }
 
+
 // ================================
 // OPEN DETAIL AGENDA (CALENDAR WIDGET & CSS)
 // ================================
@@ -257,49 +400,49 @@ function openAgenda(id) {
 
     document.getElementById("pageTitle").innerText = agenda.name;
     document.getElementById("pageSubtitle").innerText = "Hari H: " + formatDate(agenda.date);
-    
+
     const content = document.getElementById("content");
     content.style.display = "block";
-    
-    // Injecting CSS Directly for the Calendar UI to look like a neat boxed calendar
+
+    // CSS kalender disuntikkan langsung agar tampil sebagai kalender berkotak
     const calendarCSS = `
     <style>
         .agenda-detail-layout { display: flex; flex-wrap: wrap; gap: 2rem; align-items: flex-start; }
-        .calendar-widget { 
+        .calendar-widget {
             flex: 1; min-width: 320px; max-width: 420px;
-            background: #ffffff; border-radius: 12px; padding: 1.5rem; 
-            box-shadow: 0 4px 20px rgba(0,0,0,0.05); border: 2px solid #F1F5F9; 
+            background: #ffffff; border-radius: 12px; padding: 1.5rem;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.05); border: 2px solid #F1F5F9;
         }
-        .cal-header { 
-            display: flex; justify-content: space-between; align-items: center; 
-            background: #0F766E; color: #ffffff; padding: 1rem 1.5rem; 
+        .cal-header {
+            display: flex; justify-content: space-between; align-items: center;
+            background: #0F766E; color: #ffffff; padding: 1rem 1.5rem;
             border-radius: 8px; margin-bottom: 1.2rem; font-weight: 700; font-size: 1.1rem;
             text-transform: uppercase; letter-spacing: 1px;
         }
-        .cal-header button { 
-            background: rgba(255,255,255,0.2); border: none; color: white; 
-            border-radius: 6px; width: 32px; height: 32px; cursor: pointer; 
+        .cal-header button {
+            background: rgba(255,255,255,0.2); border: none; color: white;
+            border-radius: 6px; width: 32px; height: 32px; cursor: pointer;
             display: flex; align-items: center; justify-content: center; font-weight: bold; transition: 0.2s;
         }
         .cal-header button:hover { background: rgba(255,255,255,0.4); }
-        .cal-days { 
-            display: grid; grid-template-columns: repeat(7, 1fr); text-align: center; 
-            font-weight: 700; color: #475569; font-size: 0.85rem; margin-bottom: 0.5rem; 
+        .cal-days {
+            display: grid; grid-template-columns: repeat(7, 1fr); text-align: center;
+            font-weight: 700; color: #475569; font-size: 0.85rem; margin-bottom: 0.5rem;
         }
         .cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
-        .cal-date { 
-            aspect-ratio: 1; display: flex; flex-direction: column; justify-content: center; align-items: center; 
+        .cal-date {
+            aspect-ratio: 1; display: flex; flex-direction: column; justify-content: center; align-items: center;
             border-radius: 6px; font-size: 1rem; cursor: pointer; font-weight: 600;
             background: #F8FAFC; border: 1px solid #E2E8F0; color: #1E293B; transition: all 0.2s;
         }
         .cal-date:hover:not(.empty) { background: #FFF0E5; border-color: #FF6B35; color: #FF6B35; }
         .cal-date.empty { background: transparent; border-color: transparent; cursor: default; }
-        .cal-date.has-target { 
-            background: #FF6B35; color: white; border-color: #FF6B35; 
-            box-shadow: 0 4px 10px rgba(255,107,53,0.3); 
+        .cal-date.has-target {
+            background: #FF6B35; color: white; border-color: #FF6B35;
+            box-shadow: 0 4px 10px rgba(255,107,53,0.3);
         }
-        .cal-date.active { 
-            border: 2px solid #0F766E; background: #CCFBF1; color: #0F766E; transform: scale(1.05); 
+        .cal-date.active {
+            border: 2px solid #0F766E; background: #CCFBF1; color: #0F766E; transform: scale(1.05);
         }
         .cal-indicator {
             width: 6px; height: 6px; background: white; border-radius: 50%; margin-top: 4px;
@@ -318,7 +461,7 @@ function openAgenda(id) {
             </div>
             <button class="btn-primary" onclick="openTargetModal('${agenda.id}')">+ Tambah Target</button>
         </div>
-        
+
         <div class="agenda-detail-layout">
             <div class="calendar-widget">
                 <div class="cal-header">
@@ -330,7 +473,7 @@ function openAgenda(id) {
                     <div>Min</div><div>Sen</div><div>Sel</div><div>Rab</div><div>Kam</div><div>Jum</div><div>Sab</div>
                 </div>
                 <div class="cal-grid" id="calGrid"></div>
-                
+
                 <div style="margin-top: 1.5rem; display: flex; flex-direction: column; gap: 0.5rem;">
                     <button onclick="clearDateFilter()" style="background: transparent; border: 1px dashed #E5E7EB; padding: 0.5rem 1rem; border-radius: 8px; font-size: 0.8rem; cursor: pointer; color: #9094A6; width: 100%; transition: 0.2s;">
                         Tampilkan Semua Target
@@ -340,17 +483,18 @@ function openAgenda(id) {
                     </button>
                 </div>
             </div>
-            
+
             <div style="flex: 2; min-width: 320px;">
                 <h3 id="targetListTitle" style="margin-bottom: 1.2rem; color: #111; font-size: 1.2rem;">Semua Target</h3>
                 <div id="targetList"></div>
             </div>
         </div>
     `;
-    
+
     renderAgendaCalendar(agenda);
     renderTargets(agenda);
 }
+
 
 // ================================
 // LOGIKA KALENDER DETAIL AGENDA
@@ -387,9 +531,7 @@ function renderAgendaCalendar(agenda) {
     const calGrid = document.getElementById("calGrid");
     if (!calMonthYear || !calGrid) return;
 
-    const months = ["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember"];
-    calMonthYear.innerText = `${months[currentCalMonth]} ${currentCalYear}`;
-
+    calMonthYear.innerText = `${MONTHS[currentCalMonth]} ${currentCalYear}`;
     calGrid.innerHTML = "";
 
     const firstDay = new Date(currentCalYear, currentCalMonth, 1).getDay();
@@ -405,14 +547,14 @@ function renderAgendaCalendar(agenda) {
     }
 
     for (let i = 1; i <= daysInMonth; i++) {
-        const dateStr = `${currentCalYear}-${String(currentCalMonth+1).padStart(2, '0')}-${String(i).padStart(2, '0')}`;
-        
+        const dateStr = toDateString(currentCalYear, currentCalMonth, i);
+
         let classes = "cal-date";
         let innerHTML = `${i}`;
 
         if (targetDates[dateStr]) {
             classes += " has-target";
-            // Menambah titik kecil di dalam kotak sebagai penanda jika ada target
+            // Titik kecil sebagai penanda jika ada target
             innerHTML += `<div class="cal-indicator"></div>`;
         }
         if (selectedFilterDate === dateStr) classes += " active";
@@ -421,25 +563,41 @@ function renderAgendaCalendar(agenda) {
     }
 }
 
+
 // ================================
-// EXPORT EXCEL JADWAL (WARNA VIBRANT SEPERTI GAMBAR KALENDER)
+// EXCEL: STYLE BERSAMA
+// ================================
+function makeBorder(style, color) {
+    return {
+        top: { style, color },
+        bottom: { style, color },
+        left: { style, color },
+        right: { style, color }
+    };
+}
+
+const BORDER_MEDIUM = makeBorder("medium", { rgb: "000000" });
+const BORDER_THIN = makeBorder("thin", { auto: 1 });
+
+
+// ================================
+// EXPORT EXCEL JADWAL (KALENDER AGENDA)
 // ================================
 function exportCalendarToExcel() {
     const agenda = agendas.find(a => a.id === currentAgendaId);
     if (!agenda) return;
 
-    const months = ["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember"];
-    const monthName = months[currentCalMonth];
+    const monthName = MONTHS[currentCalMonth];
     const year = currentCalYear;
 
-    let wsData = [
-        [`AGENDA: ${agenda.name.toUpperCase()}`], 
-        [`${monthName.toUpperCase()} ${year}`], // Baris Nama Bulan
-        ["Minggu", "Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu"] 
+    const wsData = [
+        [`AGENDA: ${agenda.name.toUpperCase()}`],
+        [`${monthName.toUpperCase()} ${year}`], // Baris nama bulan
+        DAY_NAMES
     ];
 
-    const firstDay = new Date(year, currentCalMonth, 1).getDay(); 
-    const daysInMonth = new Date(year, currentCalMonth + 1, 0).getDate(); 
+    const firstDay = new Date(year, currentCalMonth, 1).getDay();
+    const daysInMonth = new Date(year, currentCalMonth + 1, 0).getDate();
 
     let currentWeek = [];
 
@@ -448,16 +606,14 @@ function exportCalendarToExcel() {
     }
 
     for (let day = 1; day <= daysInMonth; day++) {
-        const dateStr = `${year}-${String(currentCalMonth+1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+        const dateStr = toDateString(year, currentCalMonth, day);
         const targetsToday = agenda.targets.filter(t => t.deadline === dateStr);
-        
-        let cellContent = `${day}`; 
-        if (targetsToday.length > 0) {
-            targetsToday.forEach(t => {
-                const timeStr = t.time ? ` (${t.time})` : "";
-                cellContent += `\n• ${t.name}${timeStr}`; 
-            });
-        }
+
+        let cellContent = `${day}`;
+        targetsToday.forEach(t => {
+            const timeStr = t.time ? ` (${t.time})` : "";
+            cellContent += `\n• ${t.name}${timeStr}`;
+        });
 
         currentWeek.push(cellContent);
 
@@ -477,48 +633,54 @@ function exportCalendarToExcel() {
     const ws = XLSX.utils.aoa_to_sheet(wsData);
 
     ws['!merges'] = [
-        { s: { r: 0, c: 0 }, e: { r: 0, c: 6 } }, 
+        { s: { r: 0, c: 0 }, e: { r: 0, c: 6 } },
         { s: { r: 1, c: 0 }, e: { r: 1, c: 6 } }
     ];
 
     ws['!cols'] = Array(7).fill({ wch: 18 });
 
     ws['!rows'] = [
-        { hpt: 30 }, // Baris Judul Agenda
-        { hpt: 35 }, // Baris Bulan & Tahun (Tinggi)
-        { hpt: 25 }  // Baris Nama Hari
+        { hpt: 30 }, // Judul agenda
+        { hpt: 35 }, // Bulan & tahun
+        { hpt: 25 }  // Nama hari
     ];
-    for(let i = 3; i < wsData.length; i++) {
-        ws['!rows'].push({ hpt: 90 }); // Kotak tanggal kalender
+    for (let i = 3; i < wsData.length; i++) {
+        ws['!rows'].push({ hpt: 90 }); // Kotak tanggal
     }
-
-    const borderStyle = {
-        top: { style: "medium", color: { rgb: "000000" } },
-        bottom: { style: "medium", color: { rgb: "000000" } },
-        left: { style: "medium", color: { rgb: "000000" } },
-        right: { style: "medium", color: { rgb: "000000" } }
-    };
 
     for (let R = 0; R < wsData.length; ++R) {
         for (let C = 0; C < 7; ++C) {
-            let cellAddress = XLSX.utils.encode_cell({r: R, c: C});
-            if (!ws[cellAddress]) ws[cellAddress] = { t: 's', v: '' }; 
+            const cellAddress = XLSX.utils.encode_cell({ r: R, c: C });
+            if (!ws[cellAddress]) ws[cellAddress] = { t: 's', v: '' };
 
             if (R === 0) {
-                // Judul Agenda Utama (Putih/Polos)
-                ws[cellAddress].s = { font: { bold: true, sz: 14, color: { rgb: "2D3142" } }, alignment: { horizontal: "center", vertical: "center" } };
+                // Judul agenda
+                ws[cellAddress].s = {
+                    font: { bold: true, sz: 14, color: { rgb: "2D3142" } },
+                    alignment: { horizontal: "center", vertical: "center" }
+                };
             } else if (R === 1) {
-                // Blok Warna Solid untuk Nama Bulan (Seperti di gambar image_bacfd3.png)
-                ws[cellAddress].s = { font: { bold: true, sz: 14, color: { rgb: "FFFFFF" } }, fill: { fgColor: { rgb: "0F766E" } }, alignment: { horizontal: "center", vertical: "center" }, border: borderStyle };
+                // Blok warna solid untuk nama bulan
+                ws[cellAddress].s = {
+                    font: { bold: true, sz: 14, color: { rgb: "FFFFFF" } },
+                    fill: { fgColor: { rgb: "0F766E" } },
+                    alignment: { horizontal: "center", vertical: "center" },
+                    border: BORDER_MEDIUM
+                };
             } else if (R === 2) {
-                // Header Hari (Warna Gelap)
-                ws[cellAddress].s = { font: { bold: true, color: { rgb: "FFFFFF" } }, fill: { fgColor: { rgb: "2D3142" } }, alignment: { horizontal: "center", vertical: "center" }, border: borderStyle };
-            } else if (R > 2) {
-                // Kotak Tanggal (Border Tegas, Angka di kiri atas)
-                ws[cellAddress].s = { 
-                    alignment: { horizontal: "left", vertical: "top", wrapText: true }, 
-                    border: borderStyle,
-                    font: { sz: 10, color: { rgb: "2D3142" } } 
+                // Header hari
+                ws[cellAddress].s = {
+                    font: { bold: true, color: { rgb: "FFFFFF" } },
+                    fill: { fgColor: { rgb: "2D3142" } },
+                    alignment: { horizontal: "center", vertical: "center" },
+                    border: BORDER_MEDIUM
+                };
+            } else {
+                // Kotak tanggal (angka di kiri atas)
+                ws[cellAddress].s = {
+                    alignment: { horizontal: "left", vertical: "top", wrapText: true },
+                    border: BORDER_MEDIUM,
+                    font: { sz: 10, color: { rgb: "2D3142" } }
                 };
             }
         }
@@ -528,6 +690,7 @@ function exportCalendarToExcel() {
     XLSX.utils.book_append_sheet(wb, ws, "Kalender Agenda");
     XLSX.writeFile(wb, `Kalender_${agenda.name.replace(/\s+/g, '_')}_${monthName}.xlsx`);
 }
+
 
 // ================================
 // RENDER TARGET (MENDUKUNG FILTER KALENDER)
@@ -564,7 +727,9 @@ function renderTargets(agenda) {
                 </div>
             </div>
             <div class="target-right">
-                ${target.priority ? `<span class="priority-badge">⭐ Prioritas</span>` : `<button class="priority-btn" onclick="togglePriority('${agenda.id}', '${target.id}')">☆ Prioritas</button>`}
+                ${target.priority
+                    ? `<span class="priority-badge">⭐ Prioritas</span>`
+                    : `<button class="priority-btn" onclick="togglePriority('${agenda.id}', '${target.id}')">☆ Prioritas</button>`}
                 <div style="display:flex; gap:0.5rem;">
                     <button onclick="openEditTarget('${agenda.id}', '${target.id}')" style="background:#FFF0E5; color:#FF6B35; border:none; width:36px; height:36px; border-radius:10px; cursor:pointer;">✏️</button>
                     <button onclick="deleteTarget('${agenda.id}', '${target.id}')" style="background:#FFF0F0; color:#FF4D4D; border:none; width:36px; height:36px; border-radius:10px; cursor:pointer;">🗑</button>
@@ -575,22 +740,23 @@ function renderTargets(agenda) {
     });
 }
 
+
 // ================================
 // LOGIKA FILTER REKAP TARGET
 // ================================
 function applySpecialFilter(type) {
     const sortEl = document.getElementById("specialSortOrder");
     if (sortEl) specialSortOrder = sortEl.value;
-    
+
     const dateEl = document.getElementById("specialFilterDate");
     if (dateEl) specialFilterDate = dateEl.value;
-    
+
     const statusEl = document.getElementById("specialFilterStatus");
     if (statusEl) specialFilterStatus = statusEl.value;
-    
+
     const priorityEl = document.getElementById("specialFilterPriority");
     if (priorityEl) specialFilterPriority = priorityEl.value;
-    
+
     renderSpecialPage(type);
 }
 
@@ -602,13 +768,14 @@ function resetSpecialFilter(type) {
     renderSpecialPage(type);
 }
 
+
 // ================================
 // HALAMAN REKAP TARGET (DENGAN FILTER LENGKAP)
 // ================================
 function renderSpecialPage(type) {
     let title = "";
     let subtitle = "";
-    
+
     if (type === 'priority') {
         title = "Target Prioritas";
         subtitle = "Fokus pada target paling penting.";
@@ -619,14 +786,14 @@ function renderSpecialPage(type) {
         title = "Semua Target";
         subtitle = "Rekap seluruh target dari semua agenda, diurutkan dari deadline terdekat.";
     }
-    
+
     document.getElementById("pageTitle").innerText = title;
     document.getElementById("pageSubtitle").innerText = subtitle;
-    
+
     const content = document.getElementById("content");
     content.style.display = "block";
-    
-    // 1. GENERATE EXTRA FILTERS (Hanya muncul khusus di tab 'Semua Target')
+
+    // 1. Filter tambahan (hanya muncul di tab 'Semua Target')
     let extraFilters = "";
     if (type === 'all-targets') {
         extraFilters = `
@@ -635,7 +802,7 @@ function renderSpecialPage(type) {
                 <option value="pending" ${specialFilterStatus === 'pending' ? 'selected' : ''}>⏳ Belum Selesai</option>
                 <option value="completed" ${specialFilterStatus === 'completed' ? 'selected' : ''}>✅ Selesai</option>
             </select>
-            
+
             <select id="specialFilterPriority" onchange="applySpecialFilter('${type}')" style="padding: 0.6rem; border-radius: 8px; border: 1px solid #E5E7EB; color: #2D3142; cursor: pointer;">
                 <option value="all" ${specialFilterPriority === 'all' ? 'selected' : ''}>Semua Prioritas</option>
                 <option value="priority" ${specialFilterPriority === 'priority' ? 'selected' : ''}>⭐ Prioritas</option>
@@ -644,25 +811,27 @@ function renderSpecialPage(type) {
         `;
     }
 
-    // 2. TOMBOL RESET (Hanya muncul jika filter aktif)
-    let isFilterActive = (specialFilterDate !== '' || specialFilterStatus !== 'all' || specialFilterPriority !== 'all');
-    let resetBtn = isFilterActive ? `<button onclick="resetSpecialFilter('${type}')" style="background: none; border: none; color: #FF4D4D; cursor: pointer; font-weight: 600; font-size: 0.9rem;">✖ Reset</button>` : '';
+    // 2. Tombol reset (hanya muncul jika ada filter aktif)
+    const isFilterActive = (specialFilterDate !== '' || specialFilterStatus !== 'all' || specialFilterPriority !== 'all');
+    const resetBtn = isFilterActive
+        ? `<button onclick="resetSpecialFilter('${type}')" style="background: none; border: none; color: #FF4D4D; cursor: pointer; font-weight: 600; font-size: 0.9rem;">✖ Reset</button>`
+        : '';
 
-    // 3. PANEL AKSI & FILTER
-    let actionPanel = `
+    // 3. Panel aksi & filter
+    const actionPanel = `
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem; flex-wrap: wrap; gap: 1rem;">
             <div style="display: flex; gap: 0.8rem; align-items: center; flex-wrap: wrap;">
                 <input type="date" id="specialFilterDate" value="${specialFilterDate}" onchange="applySpecialFilter('${type}')" style="padding: 0.6rem; border-radius: 8px; border: 1px solid #E5E7EB; color: #2D3142;">
-                
+
                 <select id="specialSortOrder" onchange="applySpecialFilter('${type}')" style="padding: 0.6rem; border-radius: 8px; border: 1px solid #E5E7EB; color: #2D3142; cursor: pointer;">
                     <option value="asc" ${specialSortOrder === 'asc' ? 'selected' : ''}>🔽 Terdekat</option>
                     <option value="desc" ${specialSortOrder === 'desc' ? 'selected' : ''}>🔼 Terlama</option>
                 </select>
-                
+
                 ${extraFilters}
                 ${resetBtn}
             </div>
-            
+
             <button class="btn-primary" onclick="exportFilteredTargetsToExcel('${type}')" style="background-color: #217346; box-shadow: 0 6px 20px rgba(33, 115, 70, 0.3);">
                 📊 Export Excel
             </button>
@@ -671,47 +840,9 @@ function renderSpecialPage(type) {
 
     content.innerHTML = actionPanel + `<div class="target-list-page" style="display:flex; flex-direction:column; gap:1rem;"></div>`;
     const container = content.querySelector(".target-list-page");
-    
-    let filteredTargets = [];
 
-    agendas.filter(a => !a.isArchived).forEach(agenda => {
-        agenda.targets.forEach(target => {
-            if (type === 'priority' && target.priority && !target.completed) {
-                filteredTargets.push({...target, agendaName: agenda.name, agendaId: agenda.id});
-            } else if (type === 'completed' && target.completed) {
-                filteredTargets.push({...target, agendaName: agenda.name, agendaId: agenda.id});
-            } else if (type === 'all-targets') {
-                filteredTargets.push({...target, agendaName: agenda.name, agendaId: agenda.id});
-            }
-        });
-    });
-
-    // 4. TERAPKAN FILTER STATUS & PRIORITAS (Khusus tab Semua Target)
-    if (type === 'all-targets') {
-        if (specialFilterStatus === 'completed') {
-            filteredTargets = filteredTargets.filter(t => t.completed);
-        } else if (specialFilterStatus === 'pending') {
-            filteredTargets = filteredTargets.filter(t => !t.completed);
-        }
-        
-        if (specialFilterPriority === 'priority') {
-            filteredTargets = filteredTargets.filter(t => t.priority);
-        } else if (specialFilterPriority === 'normal') {
-            filteredTargets = filteredTargets.filter(t => !t.priority);
-        }
-    }
-
-    // 5. TERAPKAN FILTER TANGGAL
-    if (specialFilterDate) {
-        filteredTargets = filteredTargets.filter(t => t.deadline === specialFilterDate);
-    }
-
-    // 6. TERAPKAN PENGURUTAN (SORTIR)
-    filteredTargets.sort((a, b) => {
-        const dateA = a.deadline ? new Date(a.deadline).getTime() : Infinity;
-        const dateB = b.deadline ? new Date(b.deadline).getTime() : Infinity;
-        return specialSortOrder === 'asc' ? dateA - dateB : dateB - dateA;
-    });
+    // 4. Ambil data (sudah terfilter & terurut)
+    const filteredTargets = getFilteredTargets(type);
 
     if (filteredTargets.length === 0) {
         container.innerHTML = `<div class="empty-state"><h2>Belum ada target</h2><p>Tidak ada data untuk ditampilkan pada filter ini.</p></div>`;
@@ -738,94 +869,72 @@ function renderSpecialPage(type) {
     });
 }
 
+
 // ================================
 // EXPORT EXCEL SEMUA TARGET (SINKRON DENGAN SEMUA FILTER)
 // ================================
 function exportFilteredTargetsToExcel(type) {
-    let filteredTargets = [];
-    let judulExcel = "";
-
-    agendas.filter(a => !a.isArchived).forEach(agenda => {
-        agenda.targets.forEach(target => {
-            if (type === 'priority' && target.priority && !target.completed) {
-                filteredTargets.push({...target, agendaName: agenda.name});
-            } else if (type === 'completed' && target.completed) {
-                filteredTargets.push({...target, agendaName: agenda.name});
-            } else if (type === 'all-targets') {
-                filteredTargets.push({...target, agendaName: agenda.name});
-            }
-        });
-    });
-
-    // Terapkan Filter Status dan Prioritas (hanya untuk All Targets)
-    if (type === 'all-targets') {
-        if (specialFilterStatus === 'completed') filteredTargets = filteredTargets.filter(t => t.completed);
-        else if (specialFilterStatus === 'pending') filteredTargets = filteredTargets.filter(t => !t.completed);
-        
-        if (specialFilterPriority === 'priority') filteredTargets = filteredTargets.filter(t => t.priority);
-        else if (specialFilterPriority === 'normal') filteredTargets = filteredTargets.filter(t => !t.priority);
-    }
-
-    // Terapkan Filter Tanggal
-    if (specialFilterDate) {
-        filteredTargets = filteredTargets.filter(t => t.deadline === specialFilterDate);
-    }
-
-    // Terapkan Sortir Urutan
-    filteredTargets.sort((a, b) => {
-        const dateA = a.deadline ? new Date(a.deadline).getTime() : Infinity;
-        const dateB = b.deadline ? new Date(b.deadline).getTime() : Infinity;
-        return specialSortOrder === 'asc' ? dateA - dateB : dateB - dateA;
-    });
+    const filteredTargets = getFilteredTargets(type);
 
     if (filteredTargets.length === 0) {
         alert("Tidak ada data target untuk diekspor pada filter ini.");
         return;
     }
 
+    let judulExcel = "";
     if (type === 'priority') judulExcel = "REKAP TARGET PRIORITAS";
     else if (type === 'completed') judulExcel = "REKAP TARGET SELESAI";
     else judulExcel = "REKAP SEMUA TARGET";
 
     if (specialFilterDate) judulExcel += ` (${formatDate(specialFilterDate)})`;
 
-    let wsData = [
-        [judulExcel], [], 
+    const wsData = [
+        [judulExcel],
+        [],
         ["No", "Nama Agenda", "Target Pekerjaan", "Deadline", "Jam", "Prioritas", "Status"]
     ];
 
     filteredTargets.forEach((t, index) => {
         wsData.push([
-            index + 1, t.agendaName, t.name, formatDate(t.deadline),
-            t.time ? t.time : "-", t.priority ? "⭐ Ya" : "-", t.completed ? "Selesai" : "Proses"
+            index + 1,
+            t.agendaName,
+            t.name,
+            formatDate(t.deadline),
+            t.time ? t.time : "-",
+            t.priority ? "⭐ Ya" : "-",
+            t.completed ? "Selesai" : "Proses"
         ]);
     });
 
     const ws = XLSX.utils.aoa_to_sheet(wsData);
     ws['!merges'] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 6 } }];
-    ws['!cols'] = [{wch: 5}, {wch: 25}, {wch: 40}, {wch: 20}, {wch: 10}, {wch: 12}, {wch: 15}];
-    ws['!rows'] = [{hpt: 35}, {hpt: 15}]; 
-    for(let i = 2; i < wsData.length; i++) ws['!rows'].push({hpt: 25});
-
-    const borderStyle = {
-        top: { style: "thin", color: { auto: 1 } },
-        bottom: { style: "thin", color: { auto: 1 } },
-        left: { style: "thin", color: { auto: 1 } },
-        right: { style: "thin", color: { auto: 1 } }
-    };
+    ws['!cols'] = [{ wch: 5 }, { wch: 25 }, { wch: 40 }, { wch: 20 }, { wch: 10 }, { wch: 12 }, { wch: 15 }];
+    ws['!rows'] = [{ hpt: 35 }, { hpt: 15 }];
+    for (let i = 2; i < wsData.length; i++) ws['!rows'].push({ hpt: 25 });
 
     for (let R = 0; R < wsData.length; ++R) {
         for (let C = 0; C < 7; ++C) {
-            let cellAddress = XLSX.utils.encode_cell({r: R, c: C});
+            const cellAddress = XLSX.utils.encode_cell({ r: R, c: C });
             if (!ws[cellAddress]) ws[cellAddress] = { t: 's', v: '' };
 
             if (R === 0) {
-                ws[cellAddress].s = { font: { bold: true, sz: 14, color: { rgb: "FF6B35" } }, alignment: { horizontal: "center", vertical: "center" } };
+                ws[cellAddress].s = {
+                    font: { bold: true, sz: 14, color: { rgb: "FF6B35" } },
+                    alignment: { horizontal: "center", vertical: "center" }
+                };
             } else if (R === 2) {
-                ws[cellAddress].s = { font: { bold: true, color: { rgb: "FFFFFF" } }, fill: { fgColor: { rgb: "2D3142" } }, alignment: { horizontal: "center", vertical: "center" }, border: borderStyle };
+                ws[cellAddress].s = {
+                    font: { bold: true, color: { rgb: "FFFFFF" } },
+                    fill: { fgColor: { rgb: "2D3142" } },
+                    alignment: { horizontal: "center", vertical: "center" },
+                    border: BORDER_THIN
+                };
             } else if (R > 2) {
-                const isLeftAlign = (C === 1 || C === 2); 
-                ws[cellAddress].s = { alignment: { horizontal: isLeftAlign ? "left" : "center", vertical: "center", wrapText: true }, border: borderStyle };
+                const isLeftAlign = (C === 1 || C === 2);
+                ws[cellAddress].s = {
+                    alignment: { horizontal: isLeftAlign ? "left" : "center", vertical: "center", wrapText: true },
+                    border: BORDER_THIN
+                };
             }
         }
     }
@@ -837,16 +946,16 @@ function exportFilteredTargetsToExcel(type) {
 
 
 // ================================
-// FORM SUMBITS & MODAL LOGIC
+// FORM SUBMITS & MODAL LOGIC
 // ================================
-document.getElementById("agendaForm").addEventListener("submit", function(e) {
+document.getElementById("agendaForm").addEventListener("submit", function (e) {
     e.preventDefault();
     const id = document.getElementById("editAgendaId").value;
     const name = document.getElementById("agendaName").value;
     const date = document.getElementById("agendaDate").value;
     const description = document.getElementById("agendaDescription").value;
 
-    if(id) {
+    if (id) {
         const agenda = agendas.find(a => a.id === id);
         agenda.name = name;
         agenda.date = date;
@@ -857,30 +966,30 @@ document.getElementById("agendaForm").addEventListener("submit", function(e) {
 
     saveData();
     closeAgendaModal();
-    renderAgendas(); 
-    
+    renderAgendas();
+
     document.querySelectorAll(".nav-item").forEach(i => i.classList.remove("active"));
     document.querySelector('[data-page="agenda"]').classList.add("active");
 });
 
-document.getElementById("targetForm").addEventListener("submit", function(e) {
+document.getElementById("targetForm").addEventListener("submit", function (e) {
     e.preventDefault();
     const agendaId = document.getElementById("targetAgendaId").value;
     const targetId = document.getElementById("editTargetId").value;
     const agenda = agendas.find(a => a.id === agendaId);
-    
+
     if (!agenda) return;
 
     const name = document.getElementById("targetName").value;
     const deadline = document.getElementById("targetDeadline").value;
-    const time = document.getElementById("targetTime").value; 
+    const time = document.getElementById("targetTime").value;
     const priority = document.getElementById("targetPriority").checked;
 
-    if(targetId) {
+    if (targetId) {
         const target = agenda.targets.find(t => t.id === targetId);
         target.name = name;
         target.deadline = deadline;
-        target.time = time; 
+        target.time = time;
         target.priority = priority;
     } else {
         agenda.targets.push({ id: Date.now().toString(), name, deadline, time, priority, completed: false });
@@ -894,12 +1003,12 @@ document.getElementById("targetForm").addEventListener("submit", function(e) {
 function openEditAgenda(event, id) {
     event.stopPropagation();
     const a = agendas.find(a => a.id === id);
-    
+
     document.getElementById("editAgendaId").value = a.id;
     document.getElementById("agendaName").value = a.name;
     document.getElementById("agendaDate").value = a.date || "";
     document.getElementById("agendaDescription").value = a.description || "";
-    
+
     document.getElementById("agendaModalTitle").innerText = "Edit Agenda";
     document.getElementById("agendaModal").classList.remove("hidden");
 }
@@ -910,12 +1019,12 @@ function openEditTarget(agendaId, targetId) {
 
     document.getElementById("editTargetId").value = t.id;
     document.getElementById("targetAgendaId").value = a.id;
-    
+
     document.getElementById("targetName").value = t.name;
     document.getElementById("targetDeadline").value = t.deadline || "";
-    document.getElementById("targetTime").value = t.time || ""; 
+    document.getElementById("targetTime").value = t.time || "";
     document.getElementById("targetPriority").checked = t.priority;
-    
+
     document.getElementById("targetModalTitle").innerText = "Edit Target";
     document.getElementById("targetModal").classList.remove("hidden");
 }
@@ -926,6 +1035,7 @@ function openAgendaModal() {
     document.getElementById("agendaModalTitle").innerText = "Tambah Agenda";
     document.getElementById("agendaModal").classList.remove("hidden");
 }
+
 function closeAgendaModal() {
     document.getElementById("agendaModal").classList.add("hidden");
 }
@@ -934,7 +1044,7 @@ function openTargetModal(agendaId) {
     document.getElementById("targetForm").reset();
     document.getElementById("editTargetId").value = "";
     document.getElementById("targetAgendaId").value = agendaId || currentAgendaId;
-    document.getElementById("targetTime").value = ""; 
+    document.getElementById("targetTime").value = "";
     document.getElementById("targetModalTitle").innerText = "Tambah Target";
     document.getElementById("targetModal").classList.remove("hidden");
 }
@@ -948,7 +1058,7 @@ function toggleTarget(agendaId, targetId, currentView = 'agenda') {
     const target = agenda.targets.find(t => t.id === targetId);
     target.completed = !target.completed;
     saveData();
-    
+
     if (currentView === 'dashboard') {
         renderDashboard();
     } else if (['priority', 'completed', 'all-targets'].includes(currentView)) {
@@ -979,11 +1089,12 @@ function deleteAgenda(event, agendaId) {
     if (!confirm("Hapus agenda beserta seluruh target di dalamnya?")) return;
     agendas = agendas.filter(a => a.id !== agendaId);
     saveData();
-    
+
     const page = document.querySelector(".nav-item.active").dataset.page;
-    if(page === "archive") renderArchive();
+    if (page === "archive") renderArchive();
     else renderAgendas();
 }
+
 
 // ================================
 // TIMELINE AGENDA
@@ -991,11 +1102,11 @@ function deleteAgenda(event, agendaId) {
 function renderTimeline() {
     document.getElementById("pageTitle").innerText = "Timeline Agenda";
     document.getElementById("pageSubtitle").innerText = "Visualisasi alur waktu agenda Anda. Klik lingkaran untuk menceklis agenda.";
-    
+
     const content = document.getElementById("content");
     content.style.display = "block";
 
-    // REVISI: Menggunakan seluruh data agendas (termasuk yang diarsip)
+    // Menggunakan seluruh data agendas (termasuk yang diarsip)
     const sortedAgendas = [...agendas].sort((a, b) => {
         const dateA = a.date ? new Date(a.date).getTime() : Infinity;
         const dateB = b.date ? new Date(b.date).getTime() : Infinity;
@@ -1011,8 +1122,8 @@ function renderTimeline() {
         <style>
             .timeline-container {
                 display: flex;
-                flex-wrap: wrap; 
-                row-gap: 40px;   
+                flex-wrap: wrap;
+                row-gap: 40px;
                 column-gap: 0;
                 padding: 40px 20px;
                 background: #fff;
@@ -1021,10 +1132,10 @@ function renderTimeline() {
                 margin-top: 20px;
                 width: 100%;
                 box-sizing: border-box;
-                overflow: hidden; 
+                overflow: hidden;
             }
             .timeline-item {
-                flex: 1 1 220px; 
+                flex: 1 1 220px;
                 max-width: 300px;
                 display: flex;
                 flex-direction: column;
@@ -1109,7 +1220,7 @@ function renderTimeline() {
     let timelineHTML = `<div class="timeline-container">`;
 
     sortedAgendas.forEach((agenda) => {
-        const isCompleted = agenda.timelineCompleted ? true : false;
+        const isCompleted = !!agenda.timelineCompleted;
         let dateStr = "Tanpa Tanggal";
         if (agenda.date) {
             dateStr = new Date(agenda.date).toLocaleDateString('id-ID', { month: 'short', day: 'numeric' });
@@ -1142,8 +1253,8 @@ function toggleTimelineStatus(agendaId) {
     const agenda = agendas.find(a => a.id === agendaId);
     if (agenda) {
         agenda.timelineCompleted = !agenda.timelineCompleted;
-        saveData(); 
-        renderTimeline(); 
+        saveData();
+        renderTimeline();
     }
 }
 
@@ -1151,18 +1262,20 @@ function fixTimelineLines() {
     const items = document.querySelectorAll('.timeline-item');
     items.forEach((item, index) => {
         const line = item.querySelector('.timeline-line');
-        if (line) line.style.display = 'block'; 
-        
+        if (line) line.style.display = 'block';
+
         if (index === items.length - 1) {
             if (line) line.style.display = 'none';
             return;
         }
-        
+
+        // Sembunyikan garis jika item terakhir di barisnya (item berikutnya turun baris)
         if (item.offsetTop < items[index + 1].offsetTop) {
             if (line) line.style.display = 'none';
         }
     });
 }
+
 
 // ================================
 // FITUR ARSIP AGENDA
@@ -1171,10 +1284,10 @@ function toggleArchive(event, agendaId) {
     event.stopPropagation();
     const agenda = agendas.find(a => a.id === agendaId);
     if (agenda) {
-        agenda.isArchived = !agenda.isArchived; 
+        agenda.isArchived = !agenda.isArchived;
         saveData();
-        
-        if (agenda.isArchived) renderAgendas(); 
+
+        if (agenda.isArchived) renderAgendas();
         else renderArchive();
     }
 }
@@ -1182,9 +1295,9 @@ function toggleArchive(event, agendaId) {
 function renderArchive() {
     document.getElementById("pageTitle").innerText = "Arsip Agenda";
     document.getElementById("pageSubtitle").innerText = "Agenda yang sudah selesai dan disimpan.";
-    
+
     const content = document.getElementById("content");
-    content.style.display = "grid"; 
+    content.style.display = "grid";
     content.innerHTML = "";
 
     const archivedAgendas = agendas.filter(a => a.isArchived);
@@ -1202,7 +1315,7 @@ function renderArchive() {
 
         const card = document.createElement("div");
         card.className = "agenda-card";
-        card.style.opacity = "0.8"; 
+        card.style.opacity = "0.8";
         card.innerHTML = `
             <div class="agenda-card-header">
                 <div>
@@ -1229,21 +1342,19 @@ function renderArchive() {
     });
 }
 
+
 // ================================
 // HALAMAN COUNTDOWN & HABIT
 // ================================
 function renderCountdowns() {
     document.getElementById("pageTitle").innerText = "Countdown & Target Habit";
     document.getElementById("pageSubtitle").innerText = "Hitung mundur ke acara penting atau bangun kebiasaan harian Anda.";
-    
+
     const content = document.getElementById("content");
-    content.style.display = "grid"; 
+    content.style.display = "grid";
     content.innerHTML = "";
 
-    const header = document.querySelector(".header");
-    let actionBtn = header.querySelector(".btn-primary");
-    actionBtn.innerText = "+ Tambah Countdown";
-    actionBtn.onclick = openCountdownModal;
+    setHeaderAction("+ Tambah Countdown", openCountdownModal);
 
     if (countdowns.length === 0) {
         content.innerHTML = `<div class="empty-state"><h2>Belum ada Countdown</h2><p>Mulai target kebiasaan baru atau hitung mundur ke hari H!</p></div>`;
@@ -1256,10 +1367,9 @@ function renderCountdowns() {
     countdowns.forEach(cd => {
         const targetDate = new Date(cd.date);
         targetDate.setHours(0, 0, 0, 0);
-        
-        const diffTime = targetDate - today;
-        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-        
+
+        const diffDays = Math.ceil((targetDate - today) / MS_PER_DAY);
+
         let displayStr = diffDays;
         let labelStr = "HARI LAGI";
         let colorStr = "#FF6B35";
@@ -1267,11 +1377,11 @@ function renderCountdowns() {
         if (diffDays === 0) {
             displayStr = "HARI INI";
             labelStr = "ACARA TIBA";
-            colorStr = "#217346"; 
+            colorStr = "#217346";
         } else if (diffDays < 0) {
             displayStr = Math.abs(diffDays);
             labelStr = "HARI TERLEWAT";
-            colorStr = "#9094A6"; 
+            colorStr = "#9094A6";
         }
 
         const card = document.createElement("div");
@@ -1282,7 +1392,7 @@ function renderCountdowns() {
             </div>
             <h3 class="cd-title">${cd.name}</h3>
             <span class="cd-date">🎯 ${formatDate(cd.date)}</span>
-            
+
             <div class="cd-number-box">
                 <div class="cd-number" style="color: ${colorStr}; font-size: ${isNaN(displayStr) ? '2.5rem' : '4rem'};">${displayStr}</div>
                 <span class="cd-label">${labelStr}</span>
@@ -1306,22 +1416,22 @@ function closeCountdownModal() {
 }
 
 function deleteCountdown(id) {
-    if(!confirm("Hapus countdown ini?")) return;
+    if (!confirm("Hapus countdown ini?")) return;
     countdowns = countdowns.filter(c => c.id !== id);
     saveData();
     renderCountdowns();
 }
 
-document.getElementById("countdownForm").addEventListener("submit", function(e) {
+document.getElementById("countdownForm").addEventListener("submit", function (e) {
     e.preventDefault();
     const name = document.getElementById("countdownName").value;
     const date = document.getElementById("countdownDate").value;
 
-    countdowns.push({ 
-        id: Date.now().toString(), 
-        name, 
-        date, 
-        createdAt: new Date().toISOString() 
+    countdowns.push({
+        id: Date.now().toString(),
+        name,
+        date,
+        createdAt: new Date().toISOString()
     });
 
     saveData();
@@ -1329,66 +1439,65 @@ document.getElementById("countdownForm").addEventListener("submit", function(e) 
     renderCountdowns();
 });
 
+
 // ================================
-// EXPORT EXCEL TRACKER COUNTDOWN (DIGABUNG DALAM 1 SHEET / VERTIKAL)
+// EXPORT EXCEL TRACKER COUNTDOWN (SEMUA BULAN DALAM 1 SHEET, VERTIKAL)
 // ================================
 function exportCountdownExcel(id) {
     const cd = countdowns.find(c => c.id === id);
     if (!cd) return;
 
     const startDate = new Date(cd.createdAt);
-    startDate.setHours(0,0,0,0);
+    startDate.setHours(0, 0, 0, 0);
     const endDate = new Date(cd.date);
-    endDate.setHours(0,0,0,0);
+    endDate.setHours(0, 0, 0, 0);
 
     if (endDate < startDate) {
         alert("Tanggal target sudah terlewat saat countdown dibuat.");
         return;
     }
 
-    const months = ["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember"];
-    
-    // 1. Inisialisasi Data Utama untuk 1 Sheet
-    let wsData = [
+    // 1. Data utama untuk 1 sheet
+    const wsData = [
         [`HABIT TRACKER: ${cd.name.toUpperCase()}`],
         [`Total Hari / Rentang: ${formatDate(cd.createdAt)} s/d ${formatDate(cd.date)}`],
         [] // Baris kosong sebagai spasi
     ];
 
-    let merges = [
-        { s: { r: 0, c: 0 }, e: { r: 0, c: 6 } }, // Judul utama merge kolom A-G
-        { s: { r: 1, c: 0 }, e: { r: 1, c: 6 } }  // Subtitle merge kolom A-G
+    const merges = [
+        { s: { r: 0, c: 0 }, e: { r: 0, c: 6 } }, // Judul utama (kolom A-G)
+        { s: { r: 1, c: 0 }, e: { r: 1, c: 6 } }  // Subtitle (kolom A-G)
     ];
-    
-    let rowHeights = [
+
+    const rowHeights = [
         { hpt: 30 }, // Baris 0: Judul
         { hpt: 20 }, // Baris 1: Subtitle
         { hpt: 15 }  // Baris 2: Spasi
     ];
 
-    let currentRow = 3; // Penanda indeks baris saat ini
+    let currentRow = 3; // Indeks baris saat ini
 
-    let currIter = new Date(startDate.getFullYear(), startDate.getMonth(), 1);
+    const currIter = new Date(startDate.getFullYear(), startDate.getMonth(), 1);
     const finalLimit = new Date(endDate.getFullYear(), endDate.getMonth(), 1);
 
-    // Loop otomatis untuk setiap bulan dan susun secara vertikal ke bawah
+    // Loop tiap bulan, susun vertikal ke bawah
     while (currIter <= finalLimit) {
-        let targetYear = currIter.getFullYear();
-        let targetMonth = currIter.getMonth();
-        let monthName = months[targetMonth];
+        const targetYear = currIter.getFullYear();
+        const targetMonth = currIter.getMonth();
+        const monthName = MONTHS[targetMonth];
 
-        // Baris Header Nama Bulan (Misal: SEPTEMBER 2026)
+        // Header nama bulan (mis. SEPTEMBER 2026)
         wsData.push([`${monthName.toUpperCase()} ${targetYear}`]);
         merges.push({ s: { r: currentRow, c: 0 }, e: { r: currentRow, c: 6 } });
         rowHeights.push({ hpt: 30 });
         currentRow++;
 
-        // Baris Nama Hari
-        wsData.push(["Minggu", "Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu"]);
+        // Baris nama hari
+        wsData.push(DAY_NAMES);
         rowHeights.push({ hpt: 25 });
         currentRow++;
 
-        // Grid Tanggal Bulan Ini
+        // Grid tanggal bulan ini
         const firstDay = new Date(targetYear, targetMonth, 1).getDay();
         const daysInMonth = new Date(targetYear, targetMonth + 1, 0).getDate();
 
@@ -1399,8 +1508,8 @@ function exportCountdownExcel(id) {
 
         for (let day = 1; day <= daysInMonth; day++) {
             const currentDate = new Date(targetYear, targetMonth, day);
-            currentDate.setHours(0,0,0,0);
-            
+            currentDate.setHours(0, 0, 0, 0);
+
             let cellContent = `${day}`;
             if (currentDate >= startDate && currentDate <= endDate) {
                 cellContent += `\n[   ] Target`;
@@ -1410,7 +1519,7 @@ function exportCountdownExcel(id) {
 
             if (currentWeek.length === 7) {
                 wsData.push(currentWeek);
-                rowHeights.push({ hpt: 90 }); // Tinggi kotak tanggal kalender
+                rowHeights.push({ hpt: 90 }); // Tinggi kotak tanggal
                 currentRow++;
                 currentWeek = [];
             }
@@ -1425,7 +1534,7 @@ function exportCountdownExcel(id) {
             currentRow++;
         }
 
-        // Berikan jarak 2 baris kosong sebelum masuk ke bulan berikutnya
+        // Jarak 2 baris kosong sebelum bulan berikutnya
         wsData.push([]);
         wsData.push([]);
         rowHeights.push({ hpt: 15 }, { hpt: 15 });
@@ -1434,50 +1543,63 @@ function exportCountdownExcel(id) {
         currIter.setMonth(currIter.getMonth() + 1);
     }
 
-    // 2. Buat Worksheet & Terapkan Pengaturan Layout
+    // 2. Worksheet & layout
     const ws = XLSX.utils.aoa_to_sheet(wsData);
     ws['!merges'] = merges;
     ws['!cols'] = Array(7).fill({ wch: 18 });
     ws['!rows'] = rowHeights;
 
-    // 3. Styling Border dan Pewarnaan
-    const borderStyle = {
-        top: { style: "medium", color: { rgb: "000000" } },
-        bottom: { style: "medium", color: { rgb: "000000" } },
-        left: { style: "medium", color: { rgb: "000000" } },
-        right: { style: "medium", color: { rgb: "000000" } }
-    };
-
+    // 3. Styling border dan warna
     for (let R = 0; R < wsData.length; ++R) {
-        let rowData = wsData[R];
+        const rowData = wsData[R];
+
         // Lewati baris yang benar-benar kosong (spasi antar bulan)
         if (!rowData || rowData.length === 0 || rowData.every(val => val === "")) {
             continue;
         }
 
         for (let C = 0; C < 7; ++C) {
-            let cellAddress = XLSX.utils.encode_cell({r: R, c: C});
+            const cellAddress = XLSX.utils.encode_cell({ r: R, c: C });
             if (!ws[cellAddress]) ws[cellAddress] = { t: 's', v: '' };
 
             if (R === 0) {
-                // Judul Utama
-                ws[cellAddress].s = { font: { bold: true, sz: 14, color: { rgb: "FF6B35" } }, alignment: { horizontal: "center", vertical: "center" } };
+                // Judul utama
+                ws[cellAddress].s = {
+                    font: { bold: true, sz: 14, color: { rgb: "FF6B35" } },
+                    alignment: { horizontal: "center", vertical: "center" }
+                };
             } else if (R === 1) {
                 // Subtitle
-                ws[cellAddress].s = { font: { bold: true, sz: 11, color: { rgb: "64748b" } }, alignment: { horizontal: "center", vertical: "center" } };
+                ws[cellAddress].s = {
+                    font: { bold: true, sz: 11, color: { rgb: "64748b" } },
+                    alignment: { horizontal: "center", vertical: "center" }
+                };
             } else {
-                // Cek apakah baris ini adalah header nama bulan
-                if (rowData.length === 1 && rowData[0] && typeof rowData[0] === 'string' && months.some(m => rowData[0].toUpperCase().includes(m.toUpperCase()))) {
-                    ws[cellAddress].s = { font: { bold: true, sz: 13, color: { rgb: "FFFFFF" } }, fill: { fgColor: { rgb: "0F766E" } }, alignment: { horizontal: "center", vertical: "center" }, border: borderStyle };
-                } else if (rowData[0] === "Minggu" && rowData[1] === "Senin") {
-                    // Header Hari (Minggu - Sabtu)
-                    ws[cellAddress].s = { font: { bold: true, color: { rgb: "FFFFFF" } }, fill: { fgColor: { rgb: "2D3142" } }, alignment: { horizontal: "center", vertical: "center" }, border: borderStyle };
+                const isMonthHeader = rowData.length === 1 && rowData[0] && typeof rowData[0] === 'string' &&
+                    MONTHS.some(m => rowData[0].toUpperCase().includes(m.toUpperCase()));
+                const isDayHeader = rowData[0] === "Minggu" && rowData[1] === "Senin";
+
+                if (isMonthHeader) {
+                    ws[cellAddress].s = {
+                        font: { bold: true, sz: 13, color: { rgb: "FFFFFF" } },
+                        fill: { fgColor: { rgb: "0F766E" } },
+                        alignment: { horizontal: "center", vertical: "center" },
+                        border: BORDER_MEDIUM
+                    };
+                } else if (isDayHeader) {
+                    // Header hari (Minggu - Sabtu)
+                    ws[cellAddress].s = {
+                        font: { bold: true, color: { rgb: "FFFFFF" } },
+                        fill: { fgColor: { rgb: "2D3142" } },
+                        alignment: { horizontal: "center", vertical: "center" },
+                        border: BORDER_MEDIUM
+                    };
                 } else {
-                    // Kotak Tanggal Kalender
-                    ws[cellAddress].s = { 
-                        alignment: { horizontal: "left", vertical: "top", wrapText: true }, 
-                        border: borderStyle,
-                        font: { sz: 10, color: { rgb: "2D3142" } } 
+                    // Kotak tanggal kalender
+                    ws[cellAddress].s = {
+                        alignment: { horizontal: "left", vertical: "top", wrapText: true },
+                        border: BORDER_MEDIUM,
+                        font: { sz: 10, color: { rgb: "2D3142" } }
                     };
                 }
             }
@@ -1489,64 +1611,36 @@ function exportCountdownExcel(id) {
     XLSX.writeFile(wb, `Kalender_Habit_${cd.name.replace(/\s+/g, '_')}.xlsx`);
 }
 
+
 // ================================
 // NAVIGATION HANDLER & INIT
 // ================================
 document.querySelectorAll(".nav-item").forEach(button => {
-    button.addEventListener("click", function() {
+    button.addEventListener("click", function () {
         document.querySelectorAll(".nav-item").forEach(item => item.classList.remove("active"));
         this.classList.add("active");
-        
-        // REVISI: Bersihkan pengaturan filter saat berganti menu
+
+        // Bersihkan pengaturan filter saat berganti menu
         specialSortOrder = 'asc';
         specialFilterDate = '';
-        
+        specialFilterStatus = 'all';
+        specialFilterPriority = 'all';
+
         const page = this.dataset.page;
-        if (page === "dashboard") {
-            const actionBtn = document.querySelector(".header .btn-primary");
-            actionBtn.innerText = "+ Tambah Agenda";
-            actionBtn.onclick = openAgendaModal;
-            renderDashboard();
+
+        // Halaman countdown mengatur tombol headernya sendiri
+        if (page !== "countdown") {
+            setHeaderAction("+ Tambah Agenda", openAgendaModal);
         }
-        else if (page === "agenda") {
-            const actionBtn = document.querySelector(".header .btn-primary");
-            actionBtn.innerText = "+ Tambah Agenda";
-            actionBtn.onclick = openAgendaModal;
-            renderAgendas();
-        }
-        else if (page === "timeline") {
-            const actionBtn = document.querySelector(".header .btn-primary");
-            actionBtn.innerText = "+ Tambah Agenda";
-            actionBtn.onclick = openAgendaModal;
-            renderTimeline(); 
-        }
-        else if (page === "all-targets") {
-            const actionBtn = document.querySelector(".header .btn-primary");
-            actionBtn.innerText = "+ Tambah Agenda";
-            actionBtn.onclick = openAgendaModal;
-            renderSpecialPage('all-targets');
-        }
-        else if (page === "priority") {
-            const actionBtn = document.querySelector(".header .btn-primary");
-            actionBtn.innerText = "+ Tambah Agenda";
-            actionBtn.onclick = openAgendaModal;
-            renderSpecialPage('priority');
-        }
-        else if (page === "completed") {
-            const actionBtn = document.querySelector(".header .btn-primary");
-            actionBtn.innerText = "+ Tambah Agenda";
-            actionBtn.onclick = openAgendaModal;
-            renderSpecialPage('completed');
-        }
-        else if (page === "archive") {
-            const actionBtn = document.querySelector(".header .btn-primary");
-            actionBtn.innerText = "+ Tambah Agenda";
-            actionBtn.onclick = openAgendaModal;
-            renderArchive(); 
-        }
-        else if (page === "countdown") {
-            renderCountdowns(); 
-        }
+
+        if (page === "dashboard") renderDashboard();
+        else if (page === "agenda") renderAgendas();
+        else if (page === "timeline") renderTimeline();
+        else if (page === "all-targets") renderSpecialPage('all-targets');
+        else if (page === "priority") renderSpecialPage('priority');
+        else if (page === "completed") renderSpecialPage('completed');
+        else if (page === "archive") renderArchive();
+        else if (page === "countdown") renderCountdowns();
     });
 });
 
@@ -1555,5 +1649,3 @@ window.addEventListener('resize', () => {
         fixTimelineLines();
     }
 });
-
-renderDashboard();
